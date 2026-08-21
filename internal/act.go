@@ -1,0 +1,430 @@
+package internal
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+
+	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
+	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
+	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
+)
+
+type storedCandidate struct {
+	ID               string
+	Scope            MediaScope
+	ItemID           string
+	Title            string
+	ArrAction        ArrAction
+	Status           CandidateStatus
+	CollectionID     string
+	ActAfter         string
+	PostponedUntil   string
+	SizeBytes        int64
+	CriteriaJSON     string
+	QualityProfileID string
+}
+
+type actOptions struct {
+	dryRun             bool
+	maxActions         int
+	freeUp             bool
+	targetFreePercent  float64
+}
+
+func (m *Module) runAct(ctx context.Context, opts actOptions) (taken, failed int, err error) {
+	if opts.maxActions <= 0 {
+		opts.maxActions = m.getMaxActionsPerRun()
+	}
+	var cands []storedCandidate
+	if opts.freeUp {
+		cands = m.loadFreeUpCandidates(opts.maxActions)
+	} else {
+		cands = m.loadActionableCandidates(opts.maxActions)
+	}
+	freeUpRoot := m.getFreeUpRootPath()
+	for _, c := range cands {
+		ec := parseEvalContext(c.CriteriaJSON)
+		root := ec.RootFolderPath
+		if root == "" {
+			root = freeUpRoot
+		}
+		if !opts.freeUp && !m.diskGateAllowsAction(root) {
+			continue
+		}
+		if opts.freeUp && m.freeUpTargetMet(freeUpRoot, opts.targetFreePercent) {
+			break
+		}
+		profileID := c.QualityProfileID
+		if profileID == "" {
+			profileID = ec.QualityProfile
+		}
+		c.QualityProfileID = profileID
+		if opts.dryRun {
+			taken++
+			continue
+		}
+		actErr := m.executeAction(ctx, c)
+		if actErr != nil {
+			failed++
+			m.markCandidateFailed(c.ID, actErr.Error())
+			slog.Warn("maintainer action failed", "item", c.ItemID, "error", actErr)
+			continue
+		}
+		taken++
+		m.closeRequestsForItem(ctx, c)
+		m.cleanupDownloadClient(ctx, c)
+		m.markCandidateCompleted(ctx, c)
+	}
+	return taken, failed, nil
+}
+
+func parseEvalContext(raw string) EvalContext {
+	var ec EvalContext
+	_ = json.Unmarshal([]byte(raw), &ec)
+	return ec
+}
+
+func (m *Module) loadActionableCandidates(limit int) []storedCandidate {
+	m.mu.RLock()
+	db := m.db
+	m.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	now := nowRFC()
+	rows, err := db.Query(`SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+		FROM candidates
+		WHERE status IN ('approved','leaving_soon','pending')
+		  AND (postponed_until = '' OR postponed_until <= ?)
+		  AND (act_after = '' OR act_after <= ?)
+		ORDER BY act_after ASC LIMIT ?`, now, now, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return m.filterActionableCandidates(rows, false)
+}
+
+func (m *Module) loadFreeUpCandidates(limit int) []storedCandidate {
+	m.mu.RLock()
+	db := m.db
+	m.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(`SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+		FROM candidates
+		WHERE status IN ('approved','leaving_soon','pending')
+		ORDER BY size_bytes DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return m.filterActionableCandidates(rows, true)
+}
+
+func (m *Module) filterActionableCandidates(rows sqlRows, freeUp bool) []storedCandidate {
+	defer rows.Close()
+	var out []storedCandidate
+	for rows.Next() {
+		var c storedCandidate
+		if err := rows.Scan(&c.ID, &c.Scope, &c.ItemID, &c.Title, &c.ArrAction, &c.Status, &c.CollectionID, &c.ActAfter, &c.PostponedUntil, &c.SizeBytes, &c.CriteriaJSON); err != nil {
+			continue
+		}
+		if freeUp {
+			out = append(out, c)
+			continue
+		}
+		if c.Status == StatusPending {
+			if col := m.loadCollectionByID(c.CollectionID); col != nil && !col.Enabled {
+				continue
+			}
+			if !m.getAutoActEnabled() {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+type sqlRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close() error
+}
+
+func (m *Module) loadCollectionByID(id string) *storedCollection {
+	if id == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadCollectionLocked(id)
+}
+
+func (m *Module) executeAction(ctx context.Context, c storedCandidate) error {
+	switch c.ArrAction {
+	case ActionDoNothing:
+		return nil
+	case ActionUnmonitorOnly:
+		return m.unmonitorItem(ctx, c, false)
+	case ActionUnmonitor:
+		return m.unmonitorItem(ctx, c, true)
+	case ActionRemoveIfEmpty:
+		return m.removeIfEmpty(ctx, c)
+	case ActionMove:
+		return m.moveItem(ctx, c)
+	case ActionChangeQualityProfile:
+		return m.changeQualityProfile(ctx, c, c.QualityProfileID)
+	default:
+		return m.deleteItem(ctx, c)
+	}
+}
+
+func (m *Module) deleteItem(ctx context.Context, c storedCandidate) error {
+	switch c.Scope {
+	case ScopeMovieFile:
+		if err := m.ensureMovies(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		mc := m.moviesClient
+		m.mu.RUnlock()
+		_, err := mc.RemoveFile(ctx, &mgmntv1.RemoveFileRequest{FileId: c.ItemID, DeleteFiles: true})
+		return err
+	case ScopeMovie:
+		if err := m.ensureMovies(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		mc := m.moviesClient
+		m.mu.RUnlock()
+		_, err := mc.RemoveMovie(ctx, &mgmntv1.RemoveMovieRequest{MovieId: c.ItemID, DeleteFiles: true})
+		if err != nil {
+			return err
+		}
+		m.addImportExclusion(ctx, c)
+		return nil
+	case ScopeSeries:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.RemoveTVShow(ctx, &tvmgmtv1.RemoveTVShowRequest{SeriesId: c.ItemID, DeleteFiles: true})
+		if err != nil {
+			return err
+		}
+		m.addImportExclusion(ctx, c)
+		return nil
+	case ScopeEpisode:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.RemoveEpisodeFile(ctx, &tvmgmtv1.RemoveEpisodeFileRequest{EpisodeId: c.ItemID, DeleteFiles: true})
+		return err
+	default:
+		return fmt.Errorf("delete not supported for scope %s", c.Scope)
+	}
+}
+
+func (m *Module) removeFromLibrary(ctx context.Context, c storedCandidate) error {
+	switch c.Scope {
+	case ScopeMovie:
+		if err := m.ensureMovies(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		mc := m.moviesClient
+		m.mu.RUnlock()
+		_, err := mc.RemoveMovie(ctx, &mgmntv1.RemoveMovieRequest{MovieId: c.ItemID, DeleteFiles: false})
+		return err
+	case ScopeSeries:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.RemoveTVShow(ctx, &tvmgmtv1.RemoveTVShowRequest{SeriesId: c.ItemID, DeleteFiles: false})
+		return err
+	default:
+		return fmt.Errorf("remove not supported for scope %s", c.Scope)
+	}
+}
+
+func (m *Module) unmonitorItem(ctx context.Context, c storedCandidate, alsoDelete bool) error {
+	mon := false
+	switch c.Scope {
+	case ScopeMovie:
+		if err := m.ensureMovies(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		mc := m.moviesClient
+		m.mu.RUnlock()
+		_, err := mc.UpdateMovie(ctx, &mgmntv1.UpdateMovieRequest{MovieId: c.ItemID, Monitored: &mon})
+		if err != nil {
+			return err
+		}
+		if alsoDelete {
+			_, err = mc.RemoveMovie(ctx, &mgmntv1.RemoveMovieRequest{MovieId: c.ItemID, DeleteFiles: true})
+		}
+		return err
+	case ScopeSeries:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.UpdateTVShow(ctx, &tvmgmtv1.UpdateTVShowRequest{SeriesId: c.ItemID, Monitored: &mon})
+		if err != nil {
+			return err
+		}
+		if alsoDelete {
+			_, err = tc.RemoveTVShow(ctx, &tvmgmtv1.RemoveTVShowRequest{SeriesId: c.ItemID, DeleteFiles: true})
+		}
+		return err
+	case ScopeEpisode:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.UpdateEpisodeMonitored(ctx, &tvmgmtv1.UpdateEpisodeMonitoredRequest{EpisodeId: c.ItemID, Monitored: false})
+		if err != nil {
+			return err
+		}
+		if alsoDelete {
+			_, err = tc.RemoveEpisodeFile(ctx, &tvmgmtv1.RemoveEpisodeFileRequest{EpisodeId: c.ItemID, DeleteFiles: true})
+		}
+		return err
+	default:
+		return fmt.Errorf("unmonitor not supported for scope %s", c.Scope)
+	}
+}
+
+func (m *Module) removeIfEmpty(ctx context.Context, c storedCandidate) error {
+	if c.Scope != ScopeSeries {
+		return m.deleteItem(ctx, c)
+	}
+	if err := m.ensureTV(ctx); err != nil {
+		return err
+	}
+	m.mu.RLock()
+	tc := m.tvClient
+	m.mu.RUnlock()
+	resp, err := tc.GetTVShow(ctx, &tvmgmtv1.GetTVShowRequest{SeriesId: c.ItemID})
+	if err != nil {
+		return err
+	}
+	hasFiles := false
+	for _, s := range resp.GetSeries().GetSeasons() {
+		for _, ep := range s.GetEpisodes() {
+			if ep.GetHasFile() {
+				hasFiles = true
+				break
+			}
+		}
+	}
+	if hasFiles {
+		return m.unmonitorItem(ctx, c, false)
+	}
+	return m.deleteItem(ctx, c)
+}
+
+func (m *Module) removeCandidateFromJellyfin(ctx context.Context, c storedCandidate) {
+	ec := parseEvalContext(c.CriteriaJSON)
+	m.restoreLeavingSoonOverlay(ctx, ec)
+	if c.CollectionID == "" {
+		return
+	}
+	col := m.loadCollectionByID(c.CollectionID)
+	if col == nil {
+		return
+	}
+	m.removeLeavingSoonFromJellyfin(ctx, ec, col.JellyfinCollectionID, col.LeavingSoonLabel)
+	m.removeLeavingSoonFromPlex(ctx, ec, col.PlexCollectionKey, col.LeavingSoonLabel)
+}
+
+func (m *Module) markCandidateCompleted(ctx context.Context, c storedCandidate) {
+	m.removeCandidateFromJellyfin(ctx, c)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.db == nil {
+		return
+	}
+	_, _ = m.db.Exec(`UPDATE candidates SET status = ?, completed_at = ?, error = '' WHERE id = ?`, StatusCompleted, nowRFC(), c.ID)
+}
+
+func (m *Module) markCandidateFailed(id, msg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.db == nil {
+		return
+	}
+	_, _ = m.db.Exec(`UPDATE candidates SET status = ?, error = ?, completed_at = ? WHERE id = ?`, StatusFailed, msg, nowRFC(), id)
+}
+
+func (m *Module) startRun(kind string, dryRun bool) string {
+	id := newID("run")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.db == nil {
+		return id
+	}
+	_, _ = m.db.Exec(`INSERT INTO run_log (id, kind, status, dry_run, started_at) VALUES (?, ?, 'running', ?, ?)`,
+		id, kind, boolToInt(dryRun), nowRFC())
+	return id
+}
+
+func (m *Module) finishRun(id, status string, found, taken, failed int, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.db == nil {
+		return
+	}
+	_, _ = m.db.Exec(`UPDATE run_log SET status = ?, candidates_found = ?, actions_taken = ?, actions_failed = ?, error = ?, completed_at = ? WHERE id = ?`,
+		status, found, taken, failed, errMsg, nowRFC(), id)
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func (m *Module) closeRequestsForItem(ctx context.Context, c storedCandidate) {
+	if err := m.ensureRequests(ctx); err != nil {
+		return
+	}
+	m.mu.RLock()
+	rc := m.requestClient
+	m.mu.RUnlock()
+	if rc == nil {
+		return
+	}
+	resp, err := rc.ListRequests(ctx, &requestmedia.ListRequestsRequest{})
+	if err != nil {
+		return
+	}
+	for _, r := range resp.GetRequests() {
+		if r.GetItemId() != c.ItemID {
+			continue
+		}
+		_, _ = rc.DenyRequest(ctx, &requestmedia.DenyRequestRequest{
+			RequestId: r.GetRequestId(),
+			DeniedBy:  m.id,
+		})
+	}
+}

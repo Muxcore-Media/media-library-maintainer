@@ -1,0 +1,317 @@
+syntax = "proto3";
+package muxcore.library.maintainer.v1;
+option go_package = "github.com/Muxcore-Media/media-library-maintainer/proto/maintainv1;maintainv1";
+
+service MaintainerService {
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+  rpc GetRule(GetRuleRequest) returns (GetRuleResponse);
+  rpc UpsertRule(UpsertRuleRequest) returns (UpsertRuleResponse);
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse);
+  rpc PreviewRule(PreviewRuleRequest) returns (PreviewRuleResponse);
+
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc UpsertCollection(UpsertCollectionRequest) returns (UpsertCollectionResponse);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+
+  rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
+  rpc GetCandidate(GetCandidateRequest) returns (GetCandidateResponse);
+  rpc ApproveCandidate(ApproveCandidateRequest) returns (ApproveCandidateResponse);
+  rpc PostponeCandidate(PostponeCandidateRequest) returns (PostponeCandidateResponse);
+  rpc CancelCandidate(CancelCandidateRequest) returns (CancelCandidateResponse);
+
+  rpc ListProtections(ListProtectionsRequest) returns (ListProtectionsResponse);
+  rpc UpsertProtection(UpsertProtectionRequest) returns (UpsertProtectionResponse);
+  rpc DeleteProtection(DeleteProtectionRequest) returns (DeleteProtectionResponse);
+
+  rpc ScanNow(ScanNowRequest) returns (ScanNowResponse);
+  rpc ActNow(ActNowRequest) returns (ActNowResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  rpc ListExclusionLists(ListExclusionListsRequest) returns (ListExclusionListsResponse);
+  rpc UpsertExclusionList(UpsertExclusionListRequest) returns (UpsertExclusionListResponse);
+  rpc DeleteExclusionList(DeleteExclusionListRequest) returns (DeleteExclusionListResponse);
+  rpc SyncExclusionLists(SyncExclusionListsRequest) returns (SyncExclusionListsResponse);
+  rpc CheckImportBlocked(CheckImportBlockedRequest) returns (CheckImportBlockedResponse);
+
+  rpc ExportRules(ExportRulesRequest) returns (ExportRulesResponse);
+  rpc ImportRules(ImportRulesRequest) returns (ImportRulesResponse);
+  rpc GetStorageMetrics(GetStorageMetricsRequest) returns (GetStorageMetricsResponse);
+  rpc ListPlaybackUsers(ListPlaybackUsersRequest) returns (ListPlaybackUsersResponse);
+}
+
+enum MediaScope {
+  MEDIA_SCOPE_UNSPECIFIED = 0;
+  MEDIA_SCOPE_MOVIE = 1;
+  MEDIA_SCOPE_SERIES = 2;
+  MEDIA_SCOPE_SEASON = 3;
+  MEDIA_SCOPE_EPISODE = 4;
+  MEDIA_SCOPE_MOVIE_FILE = 5;
+}
+
+enum RuleOutcome {
+  RULE_OUTCOME_UNSPECIFIED = 0;
+  RULE_OUTCOME_CANDIDATE = 1;
+  RULE_OUTCOME_PROTECT = 2;
+}
+
+enum ArrAction {
+  ARR_ACTION_UNSPECIFIED = 0;
+  ARR_ACTION_DELETE = 1;
+  ARR_ACTION_UNMONITOR = 2;
+  ARR_ACTION_UNMONITOR_ONLY = 3;
+  ARR_ACTION_REMOVE_IF_EMPTY = 4;
+  ARR_ACTION_DO_NOTHING = 5;
+  ARR_ACTION_MOVE = 6;
+  ARR_ACTION_CHANGE_QUALITY_PROFILE = 7;
+}
+
+enum CandidateStatus {
+  CANDIDATE_STATUS_UNSPECIFIED = 0;
+  CANDIDATE_STATUS_PENDING = 1;
+  CANDIDATE_STATUS_LEAVING_SOON = 2;
+  CANDIDATE_STATUS_APPROVED = 3;
+  CANDIDATE_STATUS_POSTPONED = 4;
+  CANDIDATE_STATUS_CANCELLED = 5;
+  CANDIDATE_STATUS_COMPLETED = 6;
+  CANDIDATE_STATUS_FAILED = 7;
+}
+
+message RuleGroup {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+  MediaScope scope = 4;
+  string collection_id = 5;
+  string definition_json = 6;
+  RuleOutcome outcome = 7;
+  ArrAction arr_action = 8;
+  bool auto_act_enabled = 9;
+  int32 auto_act_delay_days = 10;
+  bool tag_enabled = 11;
+  string arr_tag = 12;
+  int32 max_actions_per_run = 13;
+  string quality_profile_id = 14;
+  string created_at = 15;
+  string updated_at = 16;
+}
+
+message Collection {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+  int32 grace_days = 4;
+  ArrAction arr_action = 5;
+  bool leaving_soon_enabled = 6;
+  string leaving_soon_label = 7;
+  string created_at = 8;
+  string updated_at = 9;
+}
+
+message Candidate {
+  string id = 1;
+  MediaScope scope = 2;
+  string item_id = 3;
+  string title = 4;
+  int32 year = 5;
+  int32 tmdb_id = 6;
+  string imdb_id = 7;
+  repeated string matched_rule_ids = 8;
+  ArrAction arr_action = 9;
+  CandidateStatus status = 10;
+  string collection_id = 11;
+  string added_at = 12;
+  string act_after = 13;
+  string postponed_until = 14;
+  string completed_at = 15;
+  string error = 16;
+  string criteria_json = 17;
+  int64 size_bytes = 18;
+}
+
+message Protection {
+  string id = 1;
+  MediaScope scope = 2;
+  string item_id = 3;
+  string title = 4;
+  string reason = 5;
+  string expires_at = 6;
+  string created_at = 7;
+}
+
+message RunLog {
+  string id = 1;
+  string kind = 2;
+  string status = 3;
+  int32 candidates_found = 4;
+  int32 actions_taken = 5;
+  int32 actions_failed = 6;
+  bool dry_run = 7;
+  string error = 8;
+  string started_at = 9;
+  string completed_at = 10;
+}
+
+message ListRulesRequest {}
+message ListRulesResponse { repeated RuleGroup rules = 1; }
+
+message GetRuleRequest { string id = 1; }
+message GetRuleResponse { RuleGroup rule = 1; }
+
+message UpsertRuleRequest { RuleGroup rule = 1; }
+message UpsertRuleResponse { RuleGroup rule = 1; }
+
+message DeleteRuleRequest { string id = 1; }
+message DeleteRuleResponse {}
+
+message PreviewRuleRequest {
+  RuleGroup rule = 1;
+  int32 limit = 2;
+}
+message PreviewRuleResponse {
+  repeated Candidate matches = 1;
+  int32 total = 2;
+}
+
+message ListCollectionsRequest {}
+message ListCollectionsResponse { repeated Collection collections = 1; }
+
+message UpsertCollectionRequest { Collection collection = 1; }
+message UpsertCollectionResponse { Collection collection = 1; }
+
+message DeleteCollectionRequest { string id = 1; }
+message DeleteCollectionResponse {}
+
+message ListCandidatesRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  CandidateStatus status = 3;
+  MediaScope scope = 4;
+}
+message ListCandidatesResponse {
+  repeated Candidate candidates = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message GetCandidateRequest { string id = 1; }
+message GetCandidateResponse { Candidate candidate = 1; }
+
+message ApproveCandidateRequest { string id = 1; }
+message ApproveCandidateResponse { Candidate candidate = 1; }
+
+message PostponeCandidateRequest {
+  string id = 1;
+  int32 days = 2;
+}
+message PostponeCandidateResponse { Candidate candidate = 1; }
+
+message CancelCandidateRequest { string id = 1; }
+message CancelCandidateResponse { Candidate candidate = 1; }
+
+message ListProtectionsRequest {}
+message ListProtectionsResponse { repeated Protection protections = 1; }
+
+message UpsertProtectionRequest { Protection protection = 1; }
+message UpsertProtectionResponse { Protection protection = 1; }
+
+message DeleteProtectionRequest { string id = 1; }
+message DeleteProtectionResponse {}
+
+message ScanNowRequest { bool dry_run = 1; }
+message ScanNowResponse {
+  RunLog run = 1;
+  int32 candidates_found = 2;
+}
+
+message ActNowRequest {
+  bool dry_run = 1;
+  int32 max_actions = 2;
+  bool free_up = 3;
+  double target_free_percent = 4;
+}
+message ActNowResponse {
+  RunLog run = 1;
+  int32 actions_taken = 2;
+}
+
+message ListRunsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+message ListRunsResponse {
+  repeated RunLog runs = 1;
+  int32 total = 2;
+}
+
+message ExclusionList {
+  string id = 1;
+  string name = 2;
+  string type = 3; // trakt, mdblist
+  string list_url = 4;
+  string api_key = 5;
+  repeated int32 tmdb_ids = 6;
+  string last_synced = 7;
+  string created_at = 8;
+}
+
+message ListExclusionListsRequest {}
+message ListExclusionListsResponse { repeated ExclusionList lists = 1; }
+
+message UpsertExclusionListRequest { ExclusionList list = 1; }
+message UpsertExclusionListResponse { ExclusionList list = 1; }
+
+message DeleteExclusionListRequest { string id = 1; }
+message DeleteExclusionListResponse {}
+
+message SyncExclusionListsRequest {}
+message SyncExclusionListsResponse { int32 lists_synced = 1; int32 ids_loaded = 2; }
+
+message CheckImportBlockedRequest {
+  string scope = 1;   // movie, series
+  int32 tmdb_id = 2;
+}
+message CheckImportBlockedResponse {
+  bool blocked = 1;
+  string reason = 2;
+}
+
+message ExportRulesRequest {}
+message ExportRulesResponse {
+  string rules_json = 1;
+  string rules_yaml = 2;
+}
+
+message ImportRulesRequest {
+  string rules_json = 1;
+  bool replace = 2;
+  string rules_yaml = 3;
+}
+message ImportRulesResponse { int32 imported = 1; }
+
+message StoragePathMetric {
+  string path = 1;
+  double free_percent = 2;
+  int64 free_bytes = 3;
+  int64 total_bytes = 4;
+  int64 library_bytes = 5;
+  int32 item_count = 6;
+}
+
+message GetStorageMetricsRequest {}
+message GetStorageMetricsResponse {
+  repeated StoragePathMetric paths = 1;
+}
+
+message ListPlaybackUsersRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
+message PlaybackUser {
+  string username = 1;
+}
+
+message ListPlaybackUsersResponse {
+  repeated PlaybackUser users = 1;
+}

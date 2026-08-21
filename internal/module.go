@@ -1,0 +1,209 @@
+package internal
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+
+	"google.golang.org/grpc"
+
+	maintainv1 "github.com/Muxcore-Media/media-library-maintainer/proto/maintainv1"
+	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
+	ffprobev1 "github.com/Muxcore-Media/media-ffprobe/proto/ffprobev1"
+	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
+	monitorv1 "github.com/Muxcore-Media/playback-monitor/proto/monitorv1"
+	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
+
+	"github.com/Muxcore-Media/core/pkg/contracts"
+	"github.com/Muxcore-Media/core/sdk/go/client"
+	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	_ "modernc.org/sqlite"
+)
+
+type Module struct {
+	maintainv1.UnimplementedMaintainerServiceServer
+
+	mu    sync.RWMutex
+	cfgMu sync.RWMutex
+	db    *sql.DB
+
+	id       string
+	dbPath   string
+	grpcAddr string
+
+	mc *client.Client
+
+	moviesConn    *grpc.ClientConn
+	moviesClient  mgmntv1.MovieManagementServiceClient
+	tvConn        *grpc.ClientConn
+	tvClient      tvmgmtv1.TvManagementServiceClient
+	requestsConn  *grpc.ClientConn
+	requestClient requestmedia.RequestServiceClient
+	playbackConn   *grpc.ClientConn
+	playbackClient monitorv1.PlaybackMonitorServiceClient
+
+	grpcSrv *grpc.Server
+	grpcLis net.Listener
+	httpCli *http.Client
+
+	scanInterval     time.Duration
+	actInterval      time.Duration
+	autoActEnabled   bool
+	dryRun           bool
+	maxActionsPerRun int
+	userdataDataDir  string
+	notifyEnabled           bool
+	movePath                string
+	diskActMaxFreePercent   float64
+	freeUpRootPath          string
+	addListExclusionOnDelete bool
+	leavingSoonNotifyEnabled bool
+	overlayEnabled           bool
+
+	downloadClientURL            string
+	downloadClientUser           string
+	downloadClientPass           string
+	downloadClientDeleteData     bool
+	downloadClientDeleteDataSet  bool
+	downloadClientFallbackRatio  float64
+
+	protectUnwatchedRequesters bool
+	protectRequestMinAgeDays     int
+	protectRequestMaxDays        int
+	requestUserMap               map[string]string
+	overlayShowDate              bool
+	overlayDateFormat            string
+	overlayBarColor              string
+	overlayPillColor             string
+	overlayPillTextColor         string
+	overlayTitleCardEnabled      bool
+	overlayTemplateJSON          string
+	overlayTitleCardTemplateJSON string
+
+	ffprobeConn   *grpc.ClientConn
+	ffprobeClient ffprobev1.AnalysisServiceClient
+}
+
+type Config struct {
+	ID       string
+	DBPath   string
+	GRPCAddr string
+}
+
+func NewModule(cfg Config) *Module {
+	if cfg.ID == "" {
+		cfg.ID = "media-library-maintainer"
+	}
+	if cfg.DBPath == "" {
+		cfg.DBPath = "/var/lib/media-library-maintainer/maintainer.db"
+	}
+	if cfg.GRPCAddr == "" {
+		cfg.GRPCAddr = ":9545"
+	}
+	if v := os.Getenv("MAINTAINER_DB_PATH"); v != "" {
+		cfg.DBPath = v
+	}
+	if v := os.Getenv("MAINTAINER_GRPC_ADDR"); v != "" {
+		cfg.GRPCAddr = v
+	}
+	return &Module{
+		id:             cfg.ID,
+		dbPath:         cfg.DBPath,
+		grpcAddr:       cfg.GRPCAddr,
+		httpCli:        &http.Client{Timeout: 30 * time.Second},
+		requestUserMap: make(map[string]string),
+	}
+}
+
+func (m *Module) Info() contracts.ModuleInfo {
+	return contracts.ModuleInfo{
+		ID:          m.id,
+		Name:        "Media Library Maintainer",
+		Version:     "0.1.12",
+		Roles:       []string{"library-maintainer", "cleanup"},
+		Description: "Automated library maintenance with rules, grace periods, and cleanup actions",
+		Author:      "MuxCore",
+		Capabilities: []string{
+			"media.library.maintainer",
+			"media.cleanup",
+			"settings",
+		},
+		MinCoreVersion: "0.4.0",
+		HTTPAddr:       m.grpcAddr,
+	}
+}
+
+func (m *Module) Init(ctx context.Context) error {
+	if err := m.initDB(ctx); err != nil {
+		return err
+	}
+	lis, err := net.Listen("tcp", m.grpcAddr)
+	if err != nil {
+		return fmt.Errorf("listen gRPC: %w", err)
+	}
+	m.grpcLis = lis
+	slog.Info("media-library-maintainer initialized", "db", m.dbPath, "grpc", m.grpcAddr)
+	return nil
+}
+
+func (m *Module) Start(ctx context.Context) error {
+	m.grpcSrv = grpc.NewServer()
+	maintainv1.RegisterMaintainerServiceServer(m.grpcSrv, m)
+	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
+	go func() {
+		slog.Info("media-library-maintainer gRPC started", "addr", m.grpcAddr)
+		if err := m.grpcSrv.Serve(m.grpcLis); err != nil {
+			slog.Error("media-library-maintainer gRPC error", "error", err)
+		}
+	}()
+	go m.schedulerLoop()
+	go m.dialCore(context.Background())
+	return nil
+}
+
+func (m *Module) Stop(ctx context.Context) error {
+	if m.grpcSrv != nil {
+		m.grpcSrv.GracefulStop()
+	}
+	if m.moviesConn != nil {
+		_ = m.moviesConn.Close()
+	}
+	if m.tvConn != nil {
+		_ = m.tvConn.Close()
+	}
+	if m.requestsConn != nil {
+		_ = m.requestsConn.Close()
+	}
+	if m.playbackConn != nil {
+		_ = m.playbackConn.Close()
+	}
+	if m.mc != nil {
+		m.mc.Close()
+	}
+	m.mu.Lock()
+	if m.db != nil {
+		_ = m.db.Close()
+		m.db = nil
+	}
+	m.mu.Unlock()
+	slog.Info("media-library-maintainer stopped")
+	return nil
+}
+
+func (m *Module) Health(ctx context.Context) error {
+	m.mu.RLock()
+	db := m.db
+	m.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return db.PingContext(ctx)
+}
+
+var _ contracts.Module = (*Module)(nil)

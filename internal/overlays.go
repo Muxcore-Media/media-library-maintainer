@@ -33,7 +33,7 @@ func (m *Module) applyLeavingSoonOverlay(ctx context.Context, ec EvalContext, la
 	default:
 		return
 	}
-	if m.hasOverlayState(ec.Scope, ec.ItemID) {
+	if m.hasOverlayState(ctx, ec.Scope, ec.ItemID) {
 		return
 	}
 	artType, tplMode := overlayPrimaryArtwork(ec.Scope)
@@ -69,7 +69,7 @@ func (m *Module) applyLeavingSoonOverlay(ctx context.Context, ec EvalContext, la
 			}
 		}
 	}
-	m.saveOverlayState(ec.Scope, ec.ItemID, origPath, origBackdrop, label)
+	m.saveOverlayState(ctx, ec.Scope, ec.ItemID, origPath, origBackdrop, label)
 }
 
 func overlayPrimaryArtwork(scope MediaScope) (artType, tplMode string) {
@@ -80,7 +80,7 @@ func overlayPrimaryArtwork(scope MediaScope) (artType, tplMode string) {
 }
 
 func (m *Module) restoreLeavingSoonOverlay(ctx context.Context, ec EvalContext) {
-	st := m.loadOverlayState(ec.Scope, ec.ItemID)
+	st := m.loadOverlayState(ctx, ec.Scope, ec.ItemID)
 	if st == nil {
 		return
 	}
@@ -95,7 +95,7 @@ func (m *Module) restoreLeavingSoonOverlay(ctx context.Context, ec EvalContext) 
 			_ = m.uploadArtworkOverlay(ctx, ec, img, "backdrop")
 		}
 	}
-	m.deleteOverlayState(ec.Scope, ec.ItemID)
+	m.deleteOverlayState(ctx, ec.Scope, ec.ItemID)
 }
 
 type overlayState struct {
@@ -104,11 +104,11 @@ type overlayState struct {
 	OverlayLabel         string
 }
 
-func (m *Module) hasOverlayState(scope MediaScope, itemID string) bool {
-	return m.loadOverlayState(scope, itemID) != nil
+func (m *Module) hasOverlayState(ctx context.Context, scope MediaScope, itemID string) bool {
+	return m.loadOverlayState(ctx, scope, itemID) != nil
 }
 
-func (m *Module) loadOverlayState(scope MediaScope, itemID string) *overlayState {
+func (m *Module) loadOverlayState(ctx context.Context, scope MediaScope, itemID string) *overlayState {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
@@ -116,32 +116,32 @@ func (m *Module) loadOverlayState(scope MediaScope, itemID string) *overlayState
 		return nil
 	}
 	var orig, backdrop, label string
-	err := db.QueryRow(`SELECT original_poster_path, COALESCE(original_backdrop_path,''), overlay_label FROM overlay_state WHERE scope = ? AND item_id = ?`, scope, itemID).Scan(&orig, &backdrop, &label)
+	err := db.QueryRowContext(ctx, `SELECT original_poster_path, COALESCE(original_backdrop_path,''), overlay_label FROM overlay_state WHERE scope = ? AND item_id = ?`, scope, itemID).Scan(&orig, &backdrop, &label)
 	if err != nil {
 		return nil
 	}
 	return &overlayState{OriginalPosterPath: orig, OriginalBackdropPath: backdrop, OverlayLabel: label}
 }
 
-func (m *Module) saveOverlayState(scope MediaScope, itemID, origPath, origBackdrop, label string) {
+func (m *Module) saveOverlayState(ctx context.Context, scope MediaScope, itemID, origPath, origBackdrop, label string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`INSERT INTO overlay_state (scope, item_id, original_poster_path, original_backdrop_path, overlay_label, applied_at)
+	_, _ = m.db.ExecContext(ctx, `INSERT INTO overlay_state (scope, item_id, original_poster_path, original_backdrop_path, overlay_label, applied_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, item_id) DO UPDATE SET original_poster_path=excluded.original_poster_path, original_backdrop_path=excluded.original_backdrop_path, overlay_label=excluded.overlay_label, applied_at=excluded.applied_at`,
 		scope, itemID, origPath, origBackdrop, label, nowRFC())
 }
 
-func (m *Module) deleteOverlayState(scope MediaScope, itemID string) {
+func (m *Module) deleteOverlayState(ctx context.Context, scope MediaScope, itemID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`DELETE FROM overlay_state WHERE scope = ? AND item_id = ?`, scope, itemID)
+	_, _ = m.db.ExecContext(ctx, `DELETE FROM overlay_state WHERE scope = ? AND item_id = ?`, scope, itemID)
 }
 
 func (m *Module) fetchArtworkPath(ctx context.Context, ec EvalContext, artworkType string) (string, error) {
@@ -174,7 +174,7 @@ func (m *Module) fetchArtworkPathTyped(ctx context.Context, ec EvalContext, artw
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	cli := mediaadminv1.NewMediaAdminServiceClient(conn)
 	resp, err := cli.ListArtwork(ctx, &mediaadminv1.ListArtworkRequest{Id: ec.ItemID})
 	if err != nil {
@@ -198,30 +198,6 @@ func overlaySubtitle(actAfter string, style overlayStyle) string {
 	return ""
 }
 
-func drawOverlayTitleCard(src image.Image, label, subtitle string, style overlayStyle) image.Image {
-	b := src.Bounds()
-	dst := image.NewRGBA(b)
-	draw.Draw(dst, b, src, b.Min, draw.Src)
-	barH := b.Dy() / 8
-	if barH < 28 {
-		barH = 28
-	}
-	bar := image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+barH)
-	draw.Draw(dst, bar, &image.Uniform{C: style.BarColor}, image.Point{}, draw.Src)
-	if label == "" {
-		label = "Leaving Soon"
-	}
-	drawOverlayText(dst, b.Min.X+8, b.Min.Y+barH/2, strings.ToUpper(label), color.White)
-	if subtitle != "" {
-		drawOverlayText(dst, b.Max.X-8-len(subtitle)*7, b.Min.Y+barH/2, subtitle, style.PillTextColor)
-	}
-	return dst
-}
-
-func (m *Module) fetchPosterPath(ctx context.Context, ec EvalContext) (string, error) {
-	return m.fetchArtworkPath(ctx, ec, "poster")
-}
-
 func (m *Module) adminAddrForScope(ctx context.Context, scope MediaScope) (string, error) {
 	switch scope {
 	case ScopeMovie:
@@ -243,7 +219,7 @@ func (m *Module) adminAddrForScope(ctx context.Context, scope MediaScope) (strin
 }
 
 func (m *Module) loadPosterImage(ctx context.Context, url string) (image.Image, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +227,7 @@ func (m *Module) loadPosterImage(ctx context.Context, url string) (image.Image, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if err != nil {
 		return nil, err
@@ -344,7 +320,7 @@ func (m *Module) uploadArtworkOverlay(ctx context.Context, ec EvalContext, img i
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	cli := mediaadminv1.NewMediaAdminServiceClient(conn)
 	stream, err := cli.ReplaceArtwork(ctx)
 	if err != nil {
@@ -362,8 +338,8 @@ func (m *Module) uploadArtworkOverlay(ctx context.Context, ec EvalContext, img i
 		case filename:
 			req = &mediaadminv1.ReplaceArtworkRequest{Data: &mediaadminv1.ReplaceArtworkRequest_Filename{Filename: part}}
 		}
-		if err := stream.Send(req); err != nil {
-			return err
+		if sendErr := stream.Send(req); sendErr != nil {
+			return sendErr
 		}
 	}
 	chunkSize := 64 * 1024
@@ -373,16 +349,12 @@ func (m *Module) uploadArtworkOverlay(ctx context.Context, ec EvalContext, img i
 		if end > len(data) {
 			end = len(data)
 		}
-		if err := stream.Send(&mediaadminv1.ReplaceArtworkRequest{
+		if sendErr := stream.Send(&mediaadminv1.ReplaceArtworkRequest{
 			Data: &mediaadminv1.ReplaceArtworkRequest_Chunk{Chunk: data[i:end]},
-		}); err != nil {
-			return err
+		}); sendErr != nil {
+			return sendErr
 		}
 	}
 	_, err = stream.CloseAndRecv()
 	return err
-}
-
-func (m *Module) uploadPosterOverlay(ctx context.Context, ec EvalContext, img image.Image) error {
-	return m.uploadArtworkOverlay(ctx, ec, img, "poster")
 }

@@ -41,7 +41,7 @@ func (m *Module) GetStorageMetrics(ctx context.Context, req *maintainv1.GetStora
 			FreeBytes:    freeB,
 			TotalBytes:   totalB,
 			LibraryBytes: a.bytes,
-			ItemCount:    int32(a.count),
+			ItemCount:    int32(a.count), //nolint:gosec // per-path item counts are bounded by library size
 		})
 	}
 	return &maintainv1.GetStorageMetricsResponse{Paths: paths}, nil

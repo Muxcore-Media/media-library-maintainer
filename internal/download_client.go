@@ -14,32 +14,32 @@ import (
 )
 
 type qbittorrentClient struct {
+	cli     *http.Client
 	baseURL string
 	user    string
 	pass    string
-	cli     *http.Client
-	mu      sync.Mutex
 	cookie  string
+	mu      sync.Mutex
 	auth    bool
 }
 
 type qbittorrentTorrent struct {
-	Hash         string  `json:"hash"`
-	Name         string  `json:"name"`
-	ContentPath  string  `json:"content_path"`
-	Ratio        float64 `json:"ratio"`
-	MaxRatio     float64 `json:"max_ratio"`
-	SeedingTime  int64   `json:"seeding_time"`
-	MaxSeedingTime int64 `json:"max_seeding_time"`
+	Hash           string  `json:"hash"`
+	Name           string  `json:"name"`
+	ContentPath    string  `json:"content_path"`
+	Ratio          float64 `json:"ratio"`
+	MaxRatio       float64 `json:"max_ratio"`
+	SeedingTime    int64   `json:"seeding_time"`
+	MaxSeedingTime int64   `json:"max_seeding_time"`
 }
 
 func (m *Module) qbitClient() *qbittorrentClient {
-	url := m.getDownloadClientURL()
-	if url == "" {
+	baseURL := m.getDownloadClientURL()
+	if baseURL == "" {
 		return nil
 	}
 	return &qbittorrentClient{
-		baseURL: strings.TrimRight(url, "/"),
+		baseURL: strings.TrimRight(baseURL, "/"),
 		user:    m.getDownloadClientUsername(),
 		pass:    m.getDownloadClientPassword(),
 		cli:     m.httpCli,
@@ -125,7 +125,7 @@ func (q *qbittorrentClient) login(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode == http.StatusUnauthorized || strings.TrimSpace(string(raw)) == "Fails." {
 		return fmt.Errorf("qbittorrent login failed")
@@ -163,7 +163,7 @@ func (q *qbittorrentClient) do(ctx context.Context, method, path string, body io
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && err == nil {
 		q.mu.Lock()
@@ -184,7 +184,10 @@ func (q *qbittorrentClient) getTorrent(ctx context.Context, hash string) (*qbitt
 		return nil, fmt.Errorf("torrent info status %d", code)
 	}
 	var list []qbittorrentTorrent
-	if json.Unmarshal(raw, &list) != nil || len(list) == 0 {
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
 		return nil, nil
 	}
 	return &list[0], nil

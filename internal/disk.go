@@ -34,7 +34,7 @@ func diskFreeBytes(path string) int64 {
 	if err := unix.Statfs(filepath.Clean(path), &stat); err != nil {
 		return 0
 	}
-	return int64(stat.Bavail) * int64(stat.Bsize)
+	return int64(stat.Bavail) * int64(stat.Bsize) //nolint:gosec,unconvert // disk free bytes fit int64 for maintainer gates
 }
 
 // parseSizeThreshold parses Deleterr-style sizes: 100GB, 1TB, 500MB.

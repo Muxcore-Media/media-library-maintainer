@@ -19,7 +19,7 @@ func (m *Module) applyCandidateTag(ctx context.Context, match candidateMatch) {
 	}
 	switch match.Ctx.Scope {
 	case ScopeMovie:
-		if err := m.ensureMovies(ctx); err != nil {
+		if ensureErr := m.ensureMovies(ctx); ensureErr != nil {
 			return
 		}
 		m.mu.RLock()
@@ -27,7 +27,7 @@ func (m *Module) applyCandidateTag(ctx context.Context, match candidateMatch) {
 		m.mu.RUnlock()
 		_, err = mc.SetItemTags(ctx, &mgmntv1.SetItemTagsRequest{ItemId: match.Ctx.ItemID, TagIds: []string{tagID}})
 	case ScopeSeries, ScopeSeason, ScopeEpisode:
-		if err := m.ensureTV(ctx); err != nil {
+		if ensureErr := m.ensureTV(ctx); ensureErr != nil {
 			return
 		}
 		itemID := match.Ctx.ItemID

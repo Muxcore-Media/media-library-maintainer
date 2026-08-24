@@ -11,7 +11,7 @@ import (
 
 func (m *Module) initDB(ctx context.Context) error {
 	dir := filepath.Dir(m.dbPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
 	db, err := sql.Open("sqlite", m.dbPath)
@@ -20,7 +20,7 @@ func (m *Module) initDB(ctx context.Context) error {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode=WAL`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return err
 	}
 
@@ -131,7 +131,7 @@ func (m *Module) initDB(ctx context.Context) error {
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
-			db.Close()
+			_ = db.Close()
 			return fmt.Errorf("schema: %w", err)
 		}
 	}

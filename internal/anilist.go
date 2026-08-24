@@ -10,9 +10,9 @@ import (
 )
 
 type anilistFacts struct {
-	Score       float64
-	Popularity  int
-	Favourites  int
+	Score      float64
+	Popularity int
+	Favourites int
 }
 
 func (m *Module) fetchAniListFacts(ctx context.Context, ec *EvalContext) anilistFacts {
@@ -53,7 +53,7 @@ func (m *Module) fetchAniListFacts(ctx context.Context, ec *EvalContext) anilist
 	if err != nil {
 		return anilistFacts{}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return anilistFacts{}

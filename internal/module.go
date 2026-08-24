@@ -13,12 +13,12 @@ import (
 
 	"google.golang.org/grpc"
 
+	ffprobev1 "github.com/Muxcore-Media/media-ffprobe/proto/ffprobev1"
 	maintainv1 "github.com/Muxcore-Media/media-library-maintainer/proto/maintainv1"
 	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
-	ffprobev1 "github.com/Muxcore-Media/media-ffprobe/proto/ffprobev1"
-	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
-	monitorv1 "github.com/Muxcore-Media/playback-monitor/proto/monitorv1"
 	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
+	monitorv1 "github.com/Muxcore-Media/playback-monitor/proto/monitorv1"
+	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	"github.com/Muxcore-Media/core/sdk/go/client"
@@ -28,66 +28,57 @@ import (
 
 type Module struct {
 	maintainv1.UnimplementedMaintainerServiceServer
-
-	mu    sync.RWMutex
-	cfgMu sync.RWMutex
-	db    *sql.DB
-
-	id       string
-	dbPath   string
-	grpcAddr string
-
-	mc *client.Client
-
-	moviesConn    *grpc.ClientConn
-	moviesClient  mgmntv1.MovieManagementServiceClient
-	tvConn        *grpc.ClientConn
-	tvClient      tvmgmtv1.TvManagementServiceClient
-	requestsConn  *grpc.ClientConn
-	requestClient requestmedia.RequestServiceClient
-	playbackConn   *grpc.ClientConn
-	playbackClient monitorv1.PlaybackMonitorServiceClient
-
-	grpcSrv *grpc.Server
-	grpcLis net.Listener
-	httpCli *http.Client
-
-	scanInterval     time.Duration
-	actInterval      time.Duration
-	autoActEnabled   bool
-	dryRun           bool
-	maxActionsPerRun int
-	userdataDataDir  string
-	notifyEnabled           bool
-	movePath                string
-	diskActMaxFreePercent   float64
-	freeUpRootPath          string
-	addListExclusionOnDelete bool
-	leavingSoonNotifyEnabled bool
-	overlayEnabled           bool
-
+	moviesClient                 mgmntv1.MovieManagementServiceClient
+	ffprobeClient                ffprobev1.AnalysisServiceClient
+	grpcLis                      net.Listener
+	playbackClient               monitorv1.PlaybackMonitorServiceClient
+	requestClient                requestmedia.RequestServiceClient
+	tvClient                     tvmgmtv1.TvManagementServiceClient
+	grpcSrv                      *grpc.Server
+	db                           *sql.DB
+	mc                           *client.Client
+	tvConn                       *grpc.ClientConn
+	requestUserMap               map[string]string
+	requestsConn                 *grpc.ClientConn
+	ffprobeConn                  *grpc.ClientConn
+	playbackConn                 *grpc.ClientConn
+	moviesConn                   *grpc.ClientConn
+	httpCli                      *http.Client
+	overlayTemplateJSON          string
+	userdataDataDir              string
+	overlayTitleCardTemplateJSON string
+	id                           string
+	overlayPillTextColor         string
+	overlayPillColor             string
+	overlayBarColor              string
 	downloadClientURL            string
-	downloadClientUser           string
+	overlayDateFormat            string
+	movePath                     string
+	dbPath                       string
+	freeUpRootPath               string
+	grpcAddr                     string
 	downloadClientPass           string
-	downloadClientDeleteData     bool
-	downloadClientDeleteDataSet  bool
+	downloadClientUser           string
+	diskActMaxFreePercent        float64
+	maxActionsPerRun             int
+	scanInterval                 time.Duration
 	downloadClientFallbackRatio  float64
-
-	protectUnwatchedRequesters bool
+	actInterval                  time.Duration
 	protectRequestMinAgeDays     int
 	protectRequestMaxDays        int
-	requestUserMap               map[string]string
+	mu                           sync.RWMutex
+	cfgMu                        sync.RWMutex
+	addListExclusionOnDelete     bool
 	overlayShowDate              bool
-	overlayDateFormat            string
-	overlayBarColor              string
-	overlayPillColor             string
-	overlayPillTextColor         string
+	notifyEnabled                bool
+	overlayEnabled               bool
+	dryRun                       bool
+	autoActEnabled               bool
 	overlayTitleCardEnabled      bool
-	overlayTemplateJSON          string
-	overlayTitleCardTemplateJSON string
-
-	ffprobeConn   *grpc.ClientConn
-	ffprobeClient ffprobev1.AnalysisServiceClient
+	protectUnwatchedRequesters   bool
+	downloadClientDeleteDataSet  bool
+	downloadClientDeleteData     bool
+	leavingSoonNotifyEnabled     bool
 }
 
 type Config struct {
@@ -143,7 +134,7 @@ func (m *Module) Init(ctx context.Context) error {
 	if err := m.initDB(ctx); err != nil {
 		return err
 	}
-	lis, err := net.Listen("tcp", m.grpcAddr)
+	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", m.grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen gRPC: %w", err)
 	}
@@ -162,8 +153,8 @@ func (m *Module) Start(ctx context.Context) error {
 			slog.Error("media-library-maintainer gRPC error", "error", err)
 		}
 	}()
-	go m.schedulerLoop()
-	go m.dialCore(context.Background())
+	go m.schedulerLoop(context.Background()) //nolint:gosec // module lifecycle goroutine outlives request context
+	go m.dialCore(context.Background())      //nolint:gosec // background mesh dial for module lifetime
 	return nil
 }
 
@@ -184,7 +175,7 @@ func (m *Module) Stop(ctx context.Context) error {
 		_ = m.playbackConn.Close()
 	}
 	if m.mc != nil {
-		m.mc.Close()
+		_ = m.mc.Close()
 	}
 	m.mu.Lock()
 	if m.db != nil {

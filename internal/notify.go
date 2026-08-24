@@ -12,11 +12,11 @@ import (
 	notificationv1 "github.com/Muxcore-Media/contracts-notification/muxcore/notification/v1"
 )
 
-func (m *Module) notifyRun(kind string, found, taken, failed int, dryRun bool, errMsg string) {
+func (m *Module) notifyRun(ctx context.Context, kind string, found, taken, failed int, dryRun bool, errMsg string) {
 	if !m.getNotifyEnabled() {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	severity := "info"
@@ -50,7 +50,7 @@ func (m *Module) postNotification(ctx context.Context, title, message, severity 
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	cli := notificationv1.NewNotificationServiceClient(conn)
 
 	_, err = cli.Notify(ctx, &notificationv1.NotifyRequest{

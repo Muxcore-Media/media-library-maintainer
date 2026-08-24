@@ -14,17 +14,17 @@ import (
 )
 
 type ratingFacts struct {
-	ImdbRating  float64
-	CriticScore float64
-	TraktRating float64
-	AnilistScore float64
+	ImdbRating          float64
+	CriticScore         float64
+	TraktRating         float64
+	AnilistScore        float64
 	LetterboxdScore     float64
 	LetterboxdVoteCount int
 }
 
 type ratingsCache struct {
-	mu    sync.RWMutex
 	items map[string]ratingFacts
+	mu    sync.RWMutex
 }
 
 var globalRatingsCache = ratingsCache{items: make(map[string]ratingFacts)}
@@ -155,7 +155,7 @@ func (m *Module) fetchTraktRating(ctx context.Context, kind, ref string) float64
 		return 0
 	}
 	endpoint := fmt.Sprintf("https://api.trakt.tv/%s/%s/ratings", kind, url.PathEscape(ref))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return 0
 	}
@@ -165,7 +165,7 @@ func (m *Module) fetchTraktRating(ctx context.Context, kind, ref string) float64
 	if err != nil {
 		return 0
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return 0
@@ -198,15 +198,15 @@ func (m *Module) fetchOMDBRatings(ctx context.Context, imdbID string) ratingFact
 		return ratingFacts{}
 	}
 	endpoint := fmt.Sprintf("https://www.omdbapi.com/?apikey=%s&i=%s", url.QueryEscape(apiKey), url.QueryEscape(imdbID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody) //nolint:gosec // omdb endpoint is built from configured API key and imdb id
 	if err != nil {
 		return ratingFacts{}
 	}
-	resp, err := m.httpCli.Do(req)
+	resp, err := m.httpCli.Do(req) //nolint:gosec // omdb endpoint is built from configured API key and imdb id
 	if err != nil {
 		return ratingFacts{}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return ratingFacts{}

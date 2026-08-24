@@ -51,10 +51,10 @@ func (m *Module) getTransmissionPassword() string {
 }
 
 type transmissionClient struct {
-	baseURL  string
-	user     string
-	pass     string
-	cli      *http.Client
+	baseURL   string
+	user      string
+	pass      string
+	cli       *http.Client
 	sessionID string
 }
 
@@ -95,7 +95,7 @@ func (t *transmissionClient) rpc(ctx context.Context, method string, args map[st
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusConflict {
 		t.sessionID = resp.Header.Get("X-Transmission-Session-Id")
 		return t.rpc(ctx, method, args)
@@ -120,7 +120,7 @@ func (t *transmissionClient) rpc(ctx context.Context, method string, args map[st
 	return out.Arguments, nil
 }
 
-func (t *transmissionClient) torrentByHash(ctx context.Context, hash string) (name, downloadDir string, ratio float64, done bool, ok bool) {
+func (t *transmissionClient) torrentByHash(ctx context.Context, hash string) (name, downloadDir string, ratio float64, done, ok bool) {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	args, err := t.rpc(ctx, "torrent-get", map[string]any{
 		"ids":    []string{hash},
@@ -131,12 +131,12 @@ func (t *transmissionClient) torrentByHash(ctx context.Context, hash string) (na
 	}
 	var resp struct {
 		Torrents []struct {
-			HashString    string  `json:"hashString"`
-			Name          string  `json:"name"`
-			DownloadDir   string  `json:"downloadDir"`
-			UploadRatio   float64 `json:"uploadRatio"`
-			IsFinished    bool    `json:"isFinished"`
-			SeedRatioMode int     `json:"seedRatioMode"`
+			HashString     string  `json:"hashString"`
+			Name           string  `json:"name"`
+			DownloadDir    string  `json:"downloadDir"`
+			UploadRatio    float64 `json:"uploadRatio"`
+			IsFinished     bool    `json:"isFinished"`
+			SeedRatioMode  int     `json:"seedRatioMode"`
 			SeedRatioLimit float64 `json:"seedRatioLimit"`
 		} `json:"torrents"`
 	}
@@ -144,7 +144,7 @@ func (t *transmissionClient) torrentByHash(ctx context.Context, hash string) (na
 		return "", "", 0, false, false
 	}
 	for _, tor := range resp.Torrents {
-		if strings.ToLower(tor.HashString) != hash {
+		if !strings.EqualFold(tor.HashString, hash) {
 			continue
 		}
 		done = tor.IsFinished
@@ -176,7 +176,7 @@ func (t *transmissionClient) removeDownloads(ctx context.Context, downloadIDs []
 			continue
 		}
 		_, err := t.rpc(ctx, "torrent-remove", map[string]any{
-			"ids":             []string{hash},
+			"ids":               []string{hash},
 			"delete-local-data": deleteData,
 		})
 		if err != nil {

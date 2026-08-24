@@ -13,84 +13,75 @@ type RuleDefinition struct {
 }
 
 type RuleCondition struct {
+	Value    any    `json:"value"`
 	Field    string `json:"field"`
 	Operator string `json:"operator"`
-	Value    any    `json:"value"`
 }
 
 // EvalContext holds one library item's facts for rule evaluation.
 type EvalContext struct {
-	Scope MediaScope
-
-	ItemID   string
-	Title    string
-	Year     int
-	TmdbID   int
-	ImdbID   string
-	Genres   []string
-	TagIDs   []string
-	Monitored bool
-	HasFile  bool
-
-	AddedAt         time.Time
-	FileSizeBytes   int64
-	FilePath        string
-	FileQuality     string
-	MovieID         string
-	VoteAverage     float64
-	ImdbRating      float64
-	CriticScore     float64
-	TraktRating     float64
-	RuntimeMinutes  int
-	MovieVersionCount int
-	SeasonCount     int
-	SeriesStatus    string
-	FirstAirDate    time.Time
-	LastAirDate     time.Time
-	EpisodeAirDate  time.Time
-	QualityProfile  string
-	RootFolderPath  string
-	SeriesType      string
-	SeasonNumber    int
-	EpisodeNumber   int
-	SeriesID        string
-
-	ViewCount           int
-	DaysSinceLastWatch  int
-	NeverWatched        bool
-	LastWatchedAt       time.Time
-
-	PlaybackPlayCount            int
-	PlaybackUniqueUsers          int
-	PlaybackTotalDurationMinutes float64
+	EpisodeAirDate                 time.Time
+	LastAirDate                    time.Time
+	FirstAirDate                   time.Time
+	LastWatchedAt                  time.Time
+	AddedAt                        time.Time
+	UserWatchedPercent             map[string]float64
+	UserWatchedDurationMinutes     map[string]float64
+	FilePath                       string
+	VideoResolution                string
+	AudioCodec                     string
+	ItemID                         string
+	VideoCodec                     string
+	QualityProfile                 string
+	FileQuality                    string
+	MovieID                        string
+	Scope                          MediaScope
+	Title                          string
+	MediaContainer                 string
+	ImdbID                         string
+	SeriesID                       string
+	SeriesType                     string
+	RootFolderPath                 string
+	SeriesStatus                   string
+	RequestedBy                    string
+	TagIDs                         []string
+	Genres                         []string
+	VoteAverage                    float64
+	LetterboxdVoteCount            int
+	MovieVersionCount              int
+	SeasonNumber                   int
+	EpisodeNumber                  int
+	RuntimeMinutes                 int
+	ViewCount                      int
+	DaysSinceLastWatch             int
+	DiskFreePercent                float64
+	TraktRating                    float64
+	PlaybackPlayCount              int
+	PlaybackUniqueUsers            int
+	PlaybackTotalDurationMinutes   float64
 	PlaybackLongestDurationMinutes float64
-	PlaybackHasActivity          bool
-
-	AnilistScore float64
-	LetterboxdScore     float64
-	LetterboxdVoteCount int
-
-	MediaContainer  string
-	VideoResolution string
-	VideoCodec      string
-	VideoBitrateKbps float64
-	VideoWidth       int
-	VideoHeight      int
-	AudioChannels    int
-	VideoHDR         bool
-	VideoBitDepth    int
-	AudioCodec       string
-
-	UserWatchedPercent         map[string]float64
-	UserWatchedDurationMinutes map[string]float64
-
-	Requested       bool
-	RequestedBy     string
-	DaysSinceRequest int
-	RequesterWatched bool
-
-	DiskFreePercent float64
-	Protected       bool
+	DaysSinceRequest               int
+	AnilistScore                   float64
+	LetterboxdScore                float64
+	SeasonCount                    int
+	CriticScore                    float64
+	ImdbRating                     float64
+	FileSizeBytes                  int64
+	VideoBitrateKbps               float64
+	VideoWidth                     int
+	VideoHeight                    int
+	AudioChannels                  int
+	Year                           int
+	VideoBitDepth                  int
+	TmdbID                         int
+	Monitored                      bool
+	HasFile                        bool
+	Requested                      bool
+	VideoHDR                       bool
+	PlaybackHasActivity            bool
+	RequesterWatched               bool
+	NeverWatched                   bool
+	Protected                      bool
 }
 
 type MediaScope string
@@ -113,25 +104,25 @@ const (
 type ArrAction string
 
 const (
-	ActionDelete         ArrAction = "delete"
-	ActionUnmonitor      ArrAction = "unmonitor"
-	ActionUnmonitorOnly  ArrAction = "unmonitor_only"
-	ActionRemoveIfEmpty         ArrAction = "remove_if_empty"
-	ActionDoNothing             ArrAction = "do_nothing"
-	ActionMove                  ArrAction = "move"
-	ActionChangeQualityProfile  ArrAction = "change_quality_profile"
+	ActionDelete               ArrAction = "delete"
+	ActionUnmonitor            ArrAction = "unmonitor"
+	ActionUnmonitorOnly        ArrAction = "unmonitor_only"
+	ActionRemoveIfEmpty        ArrAction = "remove_if_empty"
+	ActionDoNothing            ArrAction = "do_nothing"
+	ActionMove                 ArrAction = "move"
+	ActionChangeQualityProfile ArrAction = "change_quality_profile"
 )
 
 type CandidateStatus string
 
 const (
-	StatusPending      CandidateStatus = "pending"
-	StatusLeavingSoon  CandidateStatus = "leaving_soon"
-	StatusApproved     CandidateStatus = "approved"
-	StatusPostponed    CandidateStatus = "postponed"
-	StatusCancelled    CandidateStatus = "cancelled"
-	StatusCompleted    CandidateStatus = "completed"
-	StatusFailed       CandidateStatus = "failed"
+	StatusPending     CandidateStatus = "pending"
+	StatusLeavingSoon CandidateStatus = "leaving_soon"
+	StatusApproved    CandidateStatus = "approved"
+	StatusPostponed   CandidateStatus = "postponed"
+	StatusCancelled   CandidateStatus = "cancelled"
+	StatusCompleted   CandidateStatus = "completed"
+	StatusFailed      CandidateStatus = "failed"
 )
 
 func parseRuleDefinition(raw string) (RuleDefinition, error) {

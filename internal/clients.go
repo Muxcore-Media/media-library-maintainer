@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,11 +13,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
 	ffprobev1 "github.com/Muxcore-Media/media-ffprobe/proto/ffprobev1"
-	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
+	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
 	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
 	monitorv1 "github.com/Muxcore-Media/playback-monitor/proto/monitorv1"
+	requestmedia "github.com/Muxcore-Media/request-media/proto/requestmedia"
 	"github.com/Muxcore-Media/userdata-local/store"
 
 	"github.com/Muxcore-Media/core/sdk/go/client"
@@ -195,18 +193,17 @@ func (m *Module) ensureFFprobe(ctx context.Context) error {
 }
 
 type watchStats struct {
-	ViewCount          int
-	LastWatchedAt      time.Time
-	NeverWatched       bool
-	DaysSinceLastWatch int
-
-	PlayCount                    int
-	UniqueUsers                  int
-	TotalDurationMinutes         float64
-	LongestDurationMinutes       float64
-	HasActivity                  bool
-	UserDurationMinutes          map[string]float64
-	UserWatchedPercent           map[string]float64
+	LastWatchedAt          time.Time
+	UserDurationMinutes    map[string]float64
+	UserWatchedPercent     map[string]float64
+	ViewCount              int
+	DaysSinceLastWatch     int
+	PlayCount              int
+	UniqueUsers            int
+	TotalDurationMinutes   float64
+	LongestDurationMinutes float64
+	NeverWatched           bool
+	HasActivity            bool
 }
 
 func applyWatchStats(ec *EvalContext, ws watchStats) {
@@ -250,29 +247,29 @@ func (m *Module) watchStatsFromMonitor(ctx context.Context, itemID string, runti
 		return watchStats{}, false
 	}
 	m.mu.RLock()
-	client := m.playbackClient
+	monitorClient := m.playbackClient
 	m.mu.RUnlock()
-	if client == nil {
+	if monitorClient == nil {
 		return watchStats{}, false
 	}
-	resp, err := client.GetItemWatchStats(ctx, &monitorv1.GetItemWatchStatsRequest{
+	resp, err := monitorClient.GetItemWatchStats(ctx, &monitorv1.GetItemWatchStatsRequest{
 		ItemId:         itemID,
-		RuntimeMinutes: int32(runtimeMinutes),
+		RuntimeMinutes: int32(runtimeMinutes), //nolint:gosec // runtime minutes are bounded media metadata
 	})
 	if err != nil {
 		return watchStats{}, false
 	}
 	ws := watchStats{
-		ViewCount:                  int(resp.GetViewCount()),
-		PlayCount:                  int(resp.GetPlayCount()),
-		UniqueUsers:                int(resp.GetUniqueUserCount()),
-		TotalDurationMinutes:       resp.GetTotalDurationMinutes(),
-		LongestDurationMinutes:     resp.GetLongestDurationMinutes(),
-		HasActivity:                resp.GetHasActivity(),
-		NeverWatched:               resp.GetNeverWatched(),
-		DaysSinceLastWatch:         int(resp.GetDaysSinceLastWatch()),
-		UserDurationMinutes:        cloneFloatMap(resp.GetUserWatchedDurationMinutes()),
-		UserWatchedPercent:         cloneFloatMap(resp.GetUserWatchedPercent()),
+		ViewCount:              int(resp.GetViewCount()),
+		PlayCount:              int(resp.GetPlayCount()),
+		UniqueUsers:            int(resp.GetUniqueUserCount()),
+		TotalDurationMinutes:   resp.GetTotalDurationMinutes(),
+		LongestDurationMinutes: resp.GetLongestDurationMinutes(),
+		HasActivity:            resp.GetHasActivity(),
+		NeverWatched:           resp.GetNeverWatched(),
+		DaysSinceLastWatch:     int(resp.GetDaysSinceLastWatch()),
+		UserDurationMinutes:    cloneFloatMap(resp.GetUserWatchedDurationMinutes()),
+		UserWatchedPercent:     cloneFloatMap(resp.GetUserWatchedPercent()),
 	}
 	if resp.GetLastWatchedAtUnix() > 0 {
 		ws.LastWatchedAt = time.Unix(resp.GetLastWatchedAtUnix(), 0).UTC()
@@ -299,7 +296,7 @@ func (m *Module) watchStatsFromUserdata(itemID string, runtimeMinutes int) watch
 		return stats
 	}
 	for _, path := range listJSONFiles(dir) {
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) //nolint:gosec // userdata paths are resolved from local store layout
 		if err != nil {
 			continue
 		}
@@ -380,8 +377,11 @@ type progressEntry struct {
 
 func listJSONFiles(root string) []string {
 	var out []string
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
 			return nil
 		}
 		if strings.HasSuffix(path, ".json") {
@@ -439,30 +439,9 @@ func (m *Module) loadRequestIndex(ctx context.Context) map[string]requestInfo {
 }
 
 type requestInfo struct {
-	Requested   bool
-	RequestedBy string
 	CreatedAt   time.Time
-}
-
-func (m *Module) fetchUserdataHTTP(baseURL, userID string) (*store.Blob, error) {
-	url := strings.TrimRight(baseURL, "/") + "/userdata"
-	if userID != "" {
-		url += "?user_id=" + userID
-	}
-	resp, err := m.httpCli.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("userdata HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	var blob store.Blob
-	if err := json.NewDecoder(resp.Body).Decode(&blob); err != nil {
-		return nil, err
-	}
-	return &blob, nil
+	RequestedBy string
+	Requested   bool
 }
 
 func parseTimeRFC(s string) time.Time {

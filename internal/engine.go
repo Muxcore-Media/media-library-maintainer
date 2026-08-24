@@ -50,7 +50,7 @@ func evaluateRule(def RuleDefinition, ctx EvalContext) (bool, error) {
 	}
 }
 
-func evalCondition(c RuleCondition, ctx EvalContext) (bool, error) {
+func evalCondition(c RuleCondition, ctx EvalContext) (bool, error) { //nolint:gocyclo // mirrors maintainer rule field catalog
 	field := normalizeRuleField(c.Field)
 	op := strings.ToLower(strings.TrimSpace(c.Operator))
 

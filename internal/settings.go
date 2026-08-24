@@ -255,7 +255,7 @@ func (m *Module) settingsDefs() []contracts.SettingDef {
 	}
 }
 
-func (m *Module) updateSetting(key, value string) error {
+func (m *Module) updateSetting(key, value string) error { //nolint:gocyclo // settings surface maps many module toggles
 	value = strings.TrimSpace(value)
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()

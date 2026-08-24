@@ -14,38 +14,38 @@ import (
 )
 
 type overlayTemplate struct {
-	Name          string           `json:"name"`
-	Mode          string           `json:"mode"`
-	CanvasWidth   int              `json:"canvasWidth"`
-	CanvasHeight  int              `json:"canvasHeight"`
-	Elements      []overlayElement `json:"elements"`
+	Name         string           `json:"name"`
+	Mode         string           `json:"mode"`
+	Elements     []overlayElement `json:"elements"`
+	CanvasWidth  int              `json:"canvasWidth"`
+	CanvasHeight int              `json:"canvasHeight"`
 }
 
 type overlayElement struct {
-	Type         string             `json:"type"`
-	X            float64            `json:"x"`
-	Y            float64            `json:"y"`
-	Width        float64            `json:"width"`
-	Height       float64            `json:"height"`
-	LayerOrder   int                `json:"layerOrder"`
-	Opacity      float64            `json:"opacity"`
-	Visible      bool               `json:"visible"`
-	ShapeType    string             `json:"shapeType"`
-	FillColor    string             `json:"fillColor"`
-	StrokeColor  *string            `json:"strokeColor"`
-	StrokeWidth  float64            `json:"strokeWidth"`
-	CornerRadius float64            `json:"cornerRadius"`
-	Text         string             `json:"text"`
-	Segments     []overlaySegment   `json:"segments"`
-	FontSize     float64            `json:"fontSize"`
-	FontColor    string             `json:"fontColor"`
-	TextAlign    string             `json:"textAlign"`
-	Uppercase    bool               `json:"uppercase"`
-	DateFormat   string             `json:"dateFormat"`
-	TextToday    string             `json:"textToday"`
-	TextDay      string             `json:"textDay"`
-	TextDays     string             `json:"textDays"`
-	ImagePath    string             `json:"imagePath"`
+	StrokeColor  *string          `json:"strokeColor"`
+	TextAlign    string           `json:"textAlign"`
+	TextDays     string           `json:"textDays"`
+	TextDay      string           `json:"textDay"`
+	TextToday    string           `json:"textToday"`
+	DateFormat   string           `json:"dateFormat"`
+	Text         string           `json:"text"`
+	FontColor    string           `json:"fontColor"`
+	ShapeType    string           `json:"shapeType"`
+	FillColor    string           `json:"fillColor"`
+	ImagePath    string           `json:"imagePath"`
+	Type         string           `json:"type"`
+	Segments     []overlaySegment `json:"segments"`
+	CornerRadius float64          `json:"cornerRadius"`
+	StrokeWidth  float64          `json:"strokeWidth"`
+	FontSize     float64          `json:"fontSize"`
+	Opacity      float64          `json:"opacity"`
+	LayerOrder   int              `json:"layerOrder"`
+	Height       float64          `json:"height"`
+	Width        float64          `json:"width"`
+	Y            float64          `json:"y"`
+	X            float64          `json:"x"`
+	Visible      bool             `json:"visible"`
+	Uppercase    bool             `json:"uppercase"`
 }
 
 type overlaySegment struct {
@@ -280,14 +280,14 @@ func loadOverlayAsset(name string) image.Image {
 	}
 	dir := os.Getenv("MAINTAINER_OVERLAY_IMAGE_DIR")
 	if dir == "" {
-		dir = filepath.Join("/var/lib/media-library-maintainer", "overlay-images")
+		dir = filepath.Join("", "var", "lib", "media-library-maintainer", "overlay-images")
 	}
 	path := filepath.Join(dir, filepath.Base(name))
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // overlay assets are loaded from operator image dir
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, err := png.Decode(f)
 	if err != nil {
 		return nil

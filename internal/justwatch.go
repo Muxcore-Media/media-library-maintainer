@@ -64,18 +64,18 @@ func newJustWatchClient(country, language string, cli *http.Client) *justWatchCl
 	return &justWatchClient{country: country, language: language, baseURL: url, cli: cli}
 }
 
-func (m *Module) loadJustWatchPolicies() []justWatchPolicy {
+func (m *Module) loadJustWatchPolicies(ctx context.Context) []justWatchPolicy {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
 	if db == nil {
 		return nil
 	}
-	rows, err := db.Query(`SELECT id, name, list_url FROM exclusion_lists WHERE type = 'justwatch'`)
+	rows, err := db.QueryContext(ctx, `SELECT id, name, list_url FROM exclusion_lists WHERE type = 'justwatch'`)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []justWatchPolicy
 	for rows.Next() {
 		var id, name, raw string
@@ -171,13 +171,13 @@ func (jw *justWatchClient) availableOn(ctx context.Context, title string, year i
 }
 
 type jwSearchEntry struct {
-	Title string
-	Year  int
+	Title  string
 	Offers []struct {
 		Package struct {
 			TechnicalName string `json:"technicalName"`
 		} `json:"package"`
 	} `json:"offers"`
+	Year int
 }
 
 func (jw *justWatchClient) searchByTitleAndYear(ctx context.Context, title string, year int, mediaType string) (*jwSearchEntry, error) {
@@ -213,7 +213,7 @@ func (jw *justWatchClient) searchByTitleAndYear(ctx context.Context, title strin
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, err
@@ -238,13 +238,13 @@ func parseJustWatchSearchResponse(body []byte, title string, year int, mediaType
 					Node struct {
 						ObjectType string `json:"objectType"`
 						Content    struct {
-							Title                string `json:"title"`
-							OriginalReleaseYear  int    `json:"originalReleaseYear"`
-							Offers               []struct {
+							Title  string `json:"title"`
+							Offers []struct {
 								Package struct {
 									TechnicalName string `json:"technicalName"`
 								} `json:"package"`
 							} `json:"offers"`
+							OriginalReleaseYear int `json:"originalReleaseYear"`
 						} `json:"content"`
 					} `json:"node"`
 				} `json:"edges"`

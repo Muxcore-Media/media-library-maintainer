@@ -40,15 +40,15 @@ func (m *Module) fetchMDBListRatings(ctx context.Context, ec *EvalContext) mdbli
 	}
 	base = strings.TrimRight(base, "/")
 	url := fmt.Sprintf("%s/tmdb/%s/%d?apikey=%s", base, endpoint, ec.TmdbID, apiKey)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody) //nolint:gosec // mdblist base URL is operator-configured
 	if err != nil {
 		return mdblistRatingFacts{}
 	}
-	resp, err := m.httpCli.Do(req)
+	resp, err := m.httpCli.Do(req) //nolint:gosec // mdblist base URL is operator-configured
 	if err != nil {
 		return mdblistRatingFacts{}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return mdblistRatingFacts{}
@@ -64,15 +64,15 @@ func (m *Module) fetchMDBListRatings(ctx context.Context, ec *EvalContext) mdbli
 
 func (m *Module) fetchMDBListRatingsTV(ctx context.Context, tmdbID int, apiKey, base string) mdblistRatingFacts {
 	url := fmt.Sprintf("%s/tmdb/tv/%d?apikey=%s", base, tmdbID, apiKey)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody) //nolint:gosec // mdblist base URL is operator-configured
 	if err != nil {
 		return mdblistRatingFacts{}
 	}
-	resp, err := m.httpCli.Do(req)
+	resp, err := m.httpCli.Do(req) //nolint:gosec // mdblist base URL is operator-configured
 	if err != nil {
 		return mdblistRatingFacts{}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return mdblistRatingFacts{}

@@ -7,21 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 )
 
-type exclusionList struct {
-	ID         string
-	Name       string
-	Type       string
-	ListURL    string
-	APIKey     string
-	TmdbIDs    []int
-	LastSynced string
-}
-
-func (m *Module) loadExclusionTMDBSet() map[int]struct{} {
+func (m *Module) loadExclusionTMDBSet(ctx context.Context) map[int]struct{} {
 	out := make(map[int]struct{})
 	m.mu.RLock()
 	db := m.db
@@ -29,11 +18,11 @@ func (m *Module) loadExclusionTMDBSet() map[int]struct{} {
 	if db == nil {
 		return out
 	}
-	rows, err := db.Query(`SELECT tmdb_ids_json FROM exclusion_lists`)
+	rows, err := db.QueryContext(ctx, `SELECT tmdb_ids_json FROM exclusion_lists`)
 	if err != nil {
 		return out
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -64,11 +53,11 @@ func (m *Module) syncExclusionLists(ctx context.Context) (listsSynced, idsLoaded
 	if db == nil {
 		return 0, 0, fmt.Errorf("db unavailable")
 	}
-	rows, err := db.Query(`SELECT id, name, type, list_url, api_key FROM exclusion_lists`)
+	rows, err := db.QueryContext(ctx, `SELECT id, name, type, list_url, api_key FROM exclusion_lists`)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, name, typ, url, key string
 		if err := rows.Scan(&id, &name, &typ, &url, &key); err != nil {
@@ -84,7 +73,7 @@ func (m *Module) syncExclusionLists(ctx context.Context) (listsSynced, idsLoaded
 		}
 		raw, _ := json.Marshal(ids)
 		now := nowRFC()
-		_, _ = db.Exec(`UPDATE exclusion_lists SET tmdb_ids_json = ?, last_synced = ? WHERE id = ?`, string(raw), now, id)
+		_, _ = db.ExecContext(ctx, `UPDATE exclusion_lists SET tmdb_ids_json = ?, last_synced = ? WHERE id = ?`, string(raw), now, id)
 		listsSynced++
 		idsLoaded += len(ids)
 	}
@@ -94,7 +83,7 @@ func (m *Module) syncExclusionLists(ctx context.Context) (listsSynced, idsLoaded
 func (m *Module) fetchListTMDBIDs(ctx context.Context, typ, listURL, apiKey string) ([]int, error) {
 	switch strings.ToLower(strings.TrimSpace(typ)) {
 	case "trakt":
-		return fetchTraktListTMDB(m.httpCli, listURL, apiKey)
+		return fetchTraktListTMDB(ctx, m.httpCli, listURL, apiKey)
 	case "mdblist":
 		return fetchMDBListTMDB(m.httpCli, listURL, apiKey)
 	case "justwatch":
@@ -104,7 +93,7 @@ func (m *Module) fetchListTMDBIDs(ctx context.Context, typ, listURL, apiKey stri
 	}
 }
 
-func fetchTraktListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error) {
+func fetchTraktListTMDB(ctx context.Context, cli *http.Client, listURL, apiKey string) ([]int, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv("TRAKT_CLIENT_ID")
 	}
@@ -115,7 +104,7 @@ func fetchTraktListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error)
 	if slug == "" {
 		return nil, fmt.Errorf("invalid trakt list url")
 	}
-	req, err := http.NewRequest("GET", "https://api.trakt.tv/lists/"+slug+"/items?type=movie,show", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.trakt.tv/lists/"+slug+"/items?type=movie,show", http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +115,7 @@ func fetchTraktListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -135,7 +124,6 @@ func fetchTraktListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error)
 		return nil, fmt.Errorf("trakt API %d", resp.StatusCode)
 	}
 	var items []struct {
-		Type  string `json:"type"`
 		Movie *struct {
 			IDs struct {
 				TMDB int `json:"tmdb"`
@@ -146,6 +134,7 @@ func fetchTraktListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error)
 				TMDB int `json:"tmdb"`
 			} `json:"ids"`
 		} `json:"show"`
+		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(body, &items); err != nil {
 		return nil, err
@@ -198,11 +187,11 @@ func fetchMDBListTMDB(cli *http.Client, listURL, apiKey string) ([]int, error) {
 		}
 		url = "https://mdblist.com/api/" + apiKey + "/list/" + url
 	}
-	resp, err := cli.Get(url)
+	resp, err := cli.Get(url) //nolint:gosec // mdblist URL is operator-configured
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -258,15 +247,7 @@ func parseTMDBIDList(raw string) []int32 {
 	_ = json.Unmarshal([]byte(raw), &ids)
 	out := make([]int32, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, int32(id))
+		out = append(out, int32(id)) //nolint:gosec // tmdb ids fit maintainer int32 wire format
 	}
 	return out
-}
-
-func joinInt32(ids []int32) string {
-	parts := make([]string, len(ids))
-	for i, id := range ids {
-		parts[i] = strconv.Itoa(int(id))
-	}
-	return strings.Join(parts, ",")
 }

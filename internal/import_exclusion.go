@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func (m *Module) loadImportExclusionSet() map[string]struct{} {
+func (m *Module) loadImportExclusionSet(ctx context.Context) map[string]struct{} {
 	out := make(map[string]struct{})
 	m.mu.RLock()
 	db := m.db
@@ -20,11 +20,11 @@ func (m *Module) loadImportExclusionSet() map[string]struct{} {
 	if db == nil {
 		return out
 	}
-	rows, err := db.Query(`SELECT scope, tmdb_id FROM import_exclusions WHERE tmdb_id > 0`)
+	rows, err := db.QueryContext(ctx, `SELECT scope, tmdb_id FROM import_exclusions WHERE tmdb_id > 0`)
 	if err != nil {
 		return out
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var scope string
 		var tmdb int
@@ -55,7 +55,7 @@ func (m *Module) addImportExclusion(ctx context.Context, c storedCandidate) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db != nil {
-		_, _ = m.db.Exec(`INSERT INTO import_exclusions (scope, tmdb_id, imdb_id, title, created_at)
+		_, _ = m.db.ExecContext(ctx, `INSERT INTO import_exclusions (scope, tmdb_id, imdb_id, title, created_at)
 			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT(scope, tmdb_id) DO UPDATE SET title=excluded.title, imdb_id=excluded.imdb_id`,
 			c.Scope, ec.TmdbID, ec.ImdbID, c.Title, nowRFC())
@@ -80,17 +80,17 @@ func (m *Module) radarrAddExclusion(ctx context.Context, ec EvalContext) error {
 		"movieYear":  ec.Year,
 	}
 	raw, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/v3/exclusions", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/v3/exclusions", bytes.NewReader(raw)) //nolint:gosec // radarr base URL is operator-configured
 	if err != nil {
 		return err
 	}
 	req.Header.Set("X-Api-Key", key)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := m.httpCli.Do(req)
+	resp, err := m.httpCli.Do(req) //nolint:gosec // radarr base URL is operator-configured
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("radarr exclusion %d: %s", resp.StatusCode, string(body))

@@ -14,13 +14,13 @@ import (
 )
 
 type plexClient struct {
+	cli         *http.Client
+	sectionKeys map[string]string
+	colKeys     map[string]string
 	baseURL     string
 	token       string
-	cli         *http.Client
-	mu          sync.Mutex
 	machineID   string
-	sectionKeys map[string]string // movie | show -> section key
-	colKeys     map[string]string // sectionKey:name -> collection rating key
+	mu          sync.Mutex
 }
 
 func (m *Module) plexClient() *plexClient {
@@ -73,7 +73,7 @@ func (p *plexClient) request(ctx context.Context, method, path string, body io.R
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	return raw, resp.StatusCode, err
 }
@@ -332,7 +332,7 @@ func (m *Module) syncLeavingSoonToPlex(ctx context.Context, ec EvalContext, col 
 			return
 		}
 		if collectionKey != "" {
-			m.savePlexCollectionKey(col.ID, collectionKey)
+			m.savePlexCollectionKey(ctx, col.ID, collectionKey)
 			col.PlexCollectionKey = collectionKey
 		}
 		return
@@ -371,11 +371,11 @@ func (m *Module) removeLeavingSoonFromPlex(ctx context.Context, ec EvalContext, 
 	_ = px.removeFromCollection(ctx, colKey, itemKey)
 }
 
-func (m *Module) savePlexCollectionKey(collectionID, plexKey string) {
+func (m *Module) savePlexCollectionKey(ctx context.Context, collectionID, plexKey string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`UPDATE collections SET plex_collection_key = ? WHERE id = ?`, plexKey, collectionID)
+	_, _ = m.db.ExecContext(ctx, `UPDATE collections SET plex_collection_key = ? WHERE id = ?`, plexKey, collectionID)
 }

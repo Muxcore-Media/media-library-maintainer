@@ -14,11 +14,11 @@ import (
 )
 
 type jellyfinClient struct {
+	cli     *http.Client
+	colIDs  map[string]string
 	baseURL string
 	apiKey  string
-	cli     *http.Client
 	mu      sync.Mutex
-	colIDs  map[string]string // collection name -> jellyfin id
 }
 
 func (m *Module) jellyfinClient() *jellyfinClient {
@@ -60,7 +60,7 @@ func (jf *jellyfinClient) request(ctx context.Context, method, path string, body
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf(`MediaBrowser Token="%s"`, jf.apiKey))
+	req.Header.Set("Authorization", fmt.Sprintf("MediaBrowser Token=%q", jf.apiKey))
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -69,7 +69,7 @@ func (jf *jellyfinClient) request(ctx context.Context, method, path string, body
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	return raw, resp.StatusCode, err
 }
@@ -206,7 +206,7 @@ func (m *Module) syncLeavingSoonToJellyfin(ctx context.Context, ec EvalContext, 
 		return
 	}
 	if col.JellyfinCollectionID == "" && collectionID != "" {
-		m.saveJellyfinCollectionID(col.ID, collectionID)
+		m.saveJellyfinCollectionID(ctx, col.ID, collectionID)
 		col.JellyfinCollectionID = collectionID
 	}
 	if err := jf.addToCollection(ctx, collectionID, itemID); err != nil {
@@ -240,11 +240,11 @@ func (m *Module) removeLeavingSoonFromJellyfin(ctx context.Context, ec EvalConte
 	_ = jf.removeFromCollection(ctx, colID, itemID)
 }
 
-func (m *Module) saveJellyfinCollectionID(collectionID, jellyfinID string) {
+func (m *Module) saveJellyfinCollectionID(ctx context.Context, collectionID, jellyfinID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`UPDATE collections SET jellyfin_collection_id = ? WHERE id = ?`, jellyfinID, collectionID)
+	_, _ = m.db.ExecContext(ctx, `UPDATE collections SET jellyfin_collection_id = ? WHERE id = ?`, jellyfinID, collectionID)
 }

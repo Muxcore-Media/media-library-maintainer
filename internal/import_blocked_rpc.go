@@ -16,11 +16,11 @@ func (m *Module) CheckImportBlocked(ctx context.Context, req *maintainv1.CheckIm
 	if scope == "tv" {
 		scope = ScopeSeries
 	}
-	excludedLists := m.loadExclusionTMDBSet()
+	excludedLists := m.loadExclusionTMDBSet(ctx)
 	if m.isExcludedByList(tmdbID, excludedLists) {
 		return &maintainv1.CheckImportBlockedResponse{Blocked: true, Reason: "exclusion list"}, nil
 	}
-	importExcluded := m.loadImportExclusionSet()
+	importExcluded := m.loadImportExclusionSet(ctx)
 	if m.isImportExcluded(scope, tmdbID, importExcluded) {
 		return &maintainv1.CheckImportBlockedResponse{Blocked: true, Reason: "import exclusion"}, nil
 	}

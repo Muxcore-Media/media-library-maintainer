@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"image"
 	"path/filepath"
 	"testing"
@@ -67,7 +68,7 @@ func TestListPlaybackUsers(t *testing.T) {
 	m.cfgMu.Lock()
 	m.userdataDataDir = dir
 	m.cfgMu.Unlock()
-	users := m.listPlaybackUsers("", 10)
+	users := m.listPlaybackUsers(context.Background(), "", 10)
 	if len(users) != 1 || users[0] != "alice" {
 		t.Fatalf("got %v", users)
 	}

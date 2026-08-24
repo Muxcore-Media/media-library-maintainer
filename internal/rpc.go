@@ -16,11 +16,11 @@ func (m *Module) ListRules(ctx context.Context, req *maintainv1.ListRulesRequest
 	if m.db == nil {
 		return &maintainv1.ListRulesResponse{}, nil
 	}
-	rows, err := m.db.Query(`SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups ORDER BY name`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var rules []*maintainv1.RuleGroup
 	for rows.Next() {
 		r, err := scanRuleRow(rows)
@@ -35,7 +35,7 @@ func (m *Module) ListRules(ctx context.Context, req *maintainv1.ListRulesRequest
 func (m *Module) GetRule(ctx context.Context, req *maintainv1.GetRuleRequest) (*maintainv1.GetRuleResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	row := m.db.QueryRow(`SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups WHERE id = ?`, req.GetId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups WHERE id = ?`, req.GetId())
 	r, err := scanRuleRow(row)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (m *Module) UpsertRule(ctx context.Context, req *maintainv1.UpsertRuleReque
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`INSERT INTO rule_groups (id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, quality_profile_id, created_at, updated_at)
+	_, err := m.db.ExecContext(ctx, `INSERT INTO rule_groups (id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, quality_profile_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled, scope=excluded.scope, collection_id=excluded.collection_id,
 			definition_json=excluded.definition_json, outcome=excluded.outcome, arr_action=excluded.arr_action,
@@ -68,7 +68,7 @@ func (m *Module) UpsertRule(ctx context.Context, req *maintainv1.UpsertRuleReque
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups WHERE id = ?`, id)
+	row := m.db.QueryRowContext(ctx, `SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups WHERE id = ?`, id)
 	r, err := scanRuleRow(row)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (m *Module) UpsertRule(ctx context.Context, req *maintainv1.UpsertRuleReque
 func (m *Module) DeleteRule(ctx context.Context, req *maintainv1.DeleteRuleRequest) (*maintainv1.DeleteRuleResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`DELETE FROM rule_groups WHERE id = ?`, req.GetId())
+	_, err := m.db.ExecContext(ctx, `DELETE FROM rule_groups WHERE id = ?`, req.GetId())
 	return &maintainv1.DeleteRuleResponse{}, err
 }
 
@@ -89,12 +89,9 @@ func (m *Module) PreviewRule(ctx context.Context, req *maintainv1.PreviewRuleReq
 		return nil, fmt.Errorf("rule required")
 	}
 	rule := storedRule{
-		ID:             in.GetId(),
 		Scope:          protoScope(in.GetScope()),
 		DefinitionJSON: in.GetDefinitionJson(),
-		Outcome:        protoOutcome(in.GetOutcome()),
 		ArrAction:      protoAction(in.GetArrAction()),
-		Enabled:        true,
 	}
 	contexts, err := m.buildEvalContexts(ctx)
 	if err != nil {
@@ -108,9 +105,9 @@ func (m *Module) PreviewRule(ctx context.Context, req *maintainv1.PreviewRuleReq
 	if limit <= 0 {
 		limit = 50
 	}
-	excluded := m.loadExclusionTMDBSet()
-	importExcluded := m.loadImportExclusionSet()
-	jwPolicies := m.loadJustWatchPolicies()
+	excluded := m.loadExclusionTMDBSet(ctx)
+	importExcluded := m.loadImportExclusionSet(ctx)
+	jwPolicies := m.loadJustWatchPolicies(ctx)
 	var matches []*maintainv1.Candidate
 	for _, ec := range contexts {
 		if rule.Scope != "" && ec.Scope != rule.Scope {
@@ -134,17 +131,17 @@ func (m *Module) PreviewRule(ctx context.Context, req *maintainv1.PreviewRuleReq
 			break
 		}
 	}
-	return &maintainv1.PreviewRuleResponse{Matches: matches, Total: int32(len(matches))}, nil
+	return &maintainv1.PreviewRuleResponse{Matches: matches, Total: int32(len(matches))}, nil //nolint:gosec // preview totals are bounded by request limit
 }
 
 func (m *Module) ListCollections(ctx context.Context, req *maintainv1.ListCollectionsRequest) (*maintainv1.ListCollectionsResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	rows, err := m.db.Query(`SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at FROM collections ORDER BY name`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at FROM collections ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var cols []*maintainv1.Collection
 	for rows.Next() {
 		c, err := scanCollectionRow(rows)
@@ -168,7 +165,7 @@ func (m *Module) UpsertCollection(ctx context.Context, req *maintainv1.UpsertCol
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`INSERT INTO collections (id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at)
+	_, err := m.db.ExecContext(ctx, `INSERT INTO collections (id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled, grace_days=excluded.grace_days,
 			arr_action=excluded.arr_action, leaving_soon_enabled=excluded.leaving_soon_enabled, leaving_soon_label=excluded.leaving_soon_label, updated_at=excluded.updated_at`,
@@ -177,7 +174,7 @@ func (m *Module) UpsertCollection(ctx context.Context, req *maintainv1.UpsertCol
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at FROM collections WHERE id = ?`, id)
+	row := m.db.QueryRowContext(ctx, `SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, created_at, updated_at FROM collections WHERE id = ?`, id)
 	c, err := scanCollectionRow(row)
 	if err != nil {
 		return nil, err
@@ -188,7 +185,7 @@ func (m *Module) UpsertCollection(ctx context.Context, req *maintainv1.UpsertCol
 func (m *Module) DeleteCollection(ctx context.Context, req *maintainv1.DeleteCollectionRequest) (*maintainv1.DeleteCollectionResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`DELETE FROM collections WHERE id = ?`, req.GetId())
+	_, err := m.db.ExecContext(ctx, `DELETE FROM collections WHERE id = ?`, req.GetId())
 	return &maintainv1.DeleteCollectionResponse{}, err
 }
 
@@ -219,18 +216,18 @@ func (m *Module) ListCandidates(ctx context.Context, req *maintainv1.ListCandida
 	}
 	if len(where) > 0 {
 		clause := ` WHERE ` + strings.Join(where, ` AND `)
-		query += clause
+		query += clause //nolint:gosec // clause is built from fixed column predicates only
 		countQ += clause
 	}
 	var total int
-	_ = m.db.QueryRow(countQ, args...).Scan(&total)
+	_ = m.db.QueryRowContext(ctx, countQ, args...).Scan(&total)
 	query += ` ORDER BY added_at DESC LIMIT ? OFFSET ?`
-	qargs := append(args, pageSize, offset)
-	rows, err := m.db.Query(query, qargs...)
+	qargs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := m.db.QueryContext(ctx, query, qargs...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var cands []*maintainv1.Candidate
 	for rows.Next() {
 		c, err := scanCandidateRow(rows)
@@ -239,13 +236,13 @@ func (m *Module) ListCandidates(ctx context.Context, req *maintainv1.ListCandida
 		}
 		cands = append(cands, c)
 	}
-	return &maintainv1.ListCandidatesResponse{Candidates: cands, Total: int32(total), Page: int32(page), PageSize: int32(pageSize)}, nil
+	return &maintainv1.ListCandidatesResponse{Candidates: cands, Total: int32(total), Page: int32(page), PageSize: int32(pageSize)}, nil //nolint:gosec // pagination fields are bounded by handler limits
 }
 
 func (m *Module) GetCandidate(ctx context.Context, req *maintainv1.GetCandidateRequest) (*maintainv1.GetCandidateResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	row := m.db.QueryRow(`SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
 	c, err := scanCandidateRow(row)
 	if err != nil {
 		return nil, err
@@ -256,11 +253,11 @@ func (m *Module) GetCandidate(ctx context.Context, req *maintainv1.GetCandidateR
 func (m *Module) ApproveCandidate(ctx context.Context, req *maintainv1.ApproveCandidateRequest) (*maintainv1.ApproveCandidateResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`UPDATE candidates SET status = ?, act_after = ? WHERE id = ?`, StatusApproved, nowRFC(), req.GetId())
+	_, err := m.db.ExecContext(ctx, `UPDATE candidates SET status = ?, act_after = ? WHERE id = ?`, StatusApproved, nowRFC(), req.GetId())
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
 	c, err := scanCandidateRow(row)
 	if err != nil {
 		return nil, err
@@ -276,11 +273,11 @@ func (m *Module) PostponeCandidate(ctx context.Context, req *maintainv1.Postpone
 	until := time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`UPDATE candidates SET status = ?, postponed_until = ? WHERE id = ?`, StatusPostponed, until, req.GetId())
+	_, err := m.db.ExecContext(ctx, `UPDATE candidates SET status = ?, postponed_until = ? WHERE id = ?`, StatusPostponed, until, req.GetId())
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
 	c, err := scanCandidateRow(row)
 	if err != nil {
 		return nil, err
@@ -290,7 +287,7 @@ func (m *Module) PostponeCandidate(ctx context.Context, req *maintainv1.Postpone
 
 func (m *Module) CancelCandidate(ctx context.Context, req *maintainv1.CancelCandidateRequest) (*maintainv1.CancelCandidateResponse, error) {
 	m.mu.RLock()
-	row := m.db.QueryRow(`SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json FROM candidates WHERE id = ?`, req.GetId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json FROM candidates WHERE id = ?`, req.GetId())
 	var c storedCandidate
 	scanErr := row.Scan(&c.ID, &c.Scope, &c.ItemID, &c.Title, &c.ArrAction, &c.Status, &c.CollectionID, &c.ActAfter, &c.PostponedUntil, &c.SizeBytes, &c.CriteriaJSON)
 	m.mu.RUnlock()
@@ -299,11 +296,11 @@ func (m *Module) CancelCandidate(ctx context.Context, req *maintainv1.CancelCand
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`UPDATE candidates SET status = ? WHERE id = ?`, StatusCancelled, req.GetId())
+	_, err := m.db.ExecContext(ctx, `UPDATE candidates SET status = ? WHERE id = ?`, StatusCancelled, req.GetId())
 	if err != nil {
 		return nil, err
 	}
-	outRow := m.db.QueryRow(`SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
+	outRow := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, postponed_until, completed_at, error, criteria_json, size_bytes FROM candidates WHERE id = ?`, req.GetId())
 	cand, err := scanCandidateRow(outRow)
 	if err != nil {
 		return nil, err
@@ -314,11 +311,11 @@ func (m *Module) CancelCandidate(ctx context.Context, req *maintainv1.CancelCand
 func (m *Module) ListProtections(ctx context.Context, req *maintainv1.ListProtectionsRequest) (*maintainv1.ListProtectionsResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	rows, err := m.db.Query(`SELECT id, scope, item_id, title, reason, expires_at, created_at FROM protections ORDER BY created_at DESC`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, scope, item_id, title, reason, expires_at, created_at FROM protections ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*maintainv1.Protection
 	for rows.Next() {
 		p, err := scanProtectionRow(rows)
@@ -342,13 +339,13 @@ func (m *Module) UpsertProtection(ctx context.Context, req *maintainv1.UpsertPro
 	now := nowRFC()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`INSERT INTO protections (id, scope, item_id, title, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err := m.db.ExecContext(ctx, `INSERT INTO protections (id, scope, item_id, title, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, item_id) DO UPDATE SET title=excluded.title, reason=excluded.reason, expires_at=excluded.expires_at`,
 		id, protoScope(in.GetScope()), in.GetItemId(), in.GetTitle(), in.GetReason(), in.GetExpiresAt(), now)
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, scope, item_id, title, reason, expires_at, created_at FROM protections WHERE scope = ? AND item_id = ?`, protoScope(in.GetScope()), in.GetItemId())
+	row := m.db.QueryRowContext(ctx, `SELECT id, scope, item_id, title, reason, expires_at, created_at FROM protections WHERE scope = ? AND item_id = ?`, protoScope(in.GetScope()), in.GetItemId())
 	p, err := scanProtectionRow(row)
 	if err != nil {
 		return nil, err
@@ -359,12 +356,12 @@ func (m *Module) UpsertProtection(ctx context.Context, req *maintainv1.UpsertPro
 func (m *Module) DeleteProtection(ctx context.Context, req *maintainv1.DeleteProtectionRequest) (*maintainv1.DeleteProtectionResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`DELETE FROM protections WHERE id = ?`, req.GetId())
+	_, err := m.db.ExecContext(ctx, `DELETE FROM protections WHERE id = ?`, req.GetId())
 	return &maintainv1.DeleteProtectionResponse{}, err
 }
 
 func (m *Module) ScanNow(ctx context.Context, req *maintainv1.ScanNowRequest) (*maintainv1.ScanNowResponse, error) {
-	runID := m.startRun("scan", req.GetDryRun())
+	runID := m.startRun(ctx, "scan", req.GetDryRun())
 	found, err := m.runScan(ctx, req.GetDryRun())
 	status := "completed"
 	errMsg := ""
@@ -372,16 +369,16 @@ func (m *Module) ScanNow(ctx context.Context, req *maintainv1.ScanNowRequest) (*
 		status = "failed"
 		errMsg = err.Error()
 	}
-	m.finishRun(runID, status, found, 0, 0, errMsg)
-	m.notifyRun("scan", found, 0, 0, req.GetDryRun(), errMsg)
+	m.finishRun(ctx, runID, status, found, 0, 0, errMsg)
+	m.notifyRun(ctx, "scan", found, 0, 0, req.GetDryRun(), errMsg)
 	return &maintainv1.ScanNowResponse{
-		Run:              &maintainv1.RunLog{Id: runID, Kind: "scan", Status: status, CandidatesFound: int32(found), DryRun: req.GetDryRun(), Error: errMsg},
-		CandidatesFound:  int32(found),
+		Run:             &maintainv1.RunLog{Id: runID, Kind: "scan", Status: status, CandidatesFound: int32(found), DryRun: req.GetDryRun(), Error: errMsg}, //nolint:gosec // scan counters fit protobuf int32
+		CandidatesFound: int32(found),                                                                                                                       //nolint:gosec // scan counters fit protobuf int32
 	}, err
 }
 
 func (m *Module) ActNow(ctx context.Context, req *maintainv1.ActNowRequest) (*maintainv1.ActNowResponse, error) {
-	runID := m.startRun("act", req.GetDryRun())
+	runID := m.startRun(ctx, "act", req.GetDryRun())
 	taken, failed, err := m.runAct(ctx, actOptions{
 		dryRun:            req.GetDryRun(),
 		maxActions:        int(req.GetMaxActions()),
@@ -394,11 +391,11 @@ func (m *Module) ActNow(ctx context.Context, req *maintainv1.ActNowRequest) (*ma
 		status = "failed"
 		errMsg = err.Error()
 	}
-	m.finishRun(runID, status, 0, taken, failed, errMsg)
-	m.notifyRun("act", 0, taken, failed, req.GetDryRun(), errMsg)
+	m.finishRun(ctx, runID, status, 0, taken, failed, errMsg)
+	m.notifyRun(ctx, "act", 0, taken, failed, req.GetDryRun(), errMsg)
 	return &maintainv1.ActNowResponse{
-		Run:           &maintainv1.RunLog{Id: runID, Kind: "act", Status: status, ActionsTaken: int32(taken), ActionsFailed: int32(failed), DryRun: req.GetDryRun(), Error: errMsg},
-		ActionsTaken: int32(taken),
+		Run:          &maintainv1.RunLog{Id: runID, Kind: "act", Status: status, ActionsTaken: int32(taken), ActionsFailed: int32(failed), DryRun: req.GetDryRun(), Error: errMsg}, //nolint:gosec // act counters fit protobuf int32
+		ActionsTaken: int32(taken),                                                                                                                                                 //nolint:gosec // act counters fit protobuf int32
 	}, err
 }
 
@@ -415,12 +412,12 @@ func (m *Module) ListRuns(ctx context.Context, req *maintainv1.ListRunsRequest) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var total int
-	_ = m.db.QueryRow(`SELECT COUNT(*) FROM run_log`).Scan(&total)
-	rows, err := m.db.Query(`SELECT id, kind, status, candidates_found, actions_taken, actions_failed, dry_run, error, started_at, completed_at FROM run_log ORDER BY started_at DESC LIMIT ? OFFSET ?`, pageSize, offset)
+	_ = m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM run_log`).Scan(&total)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, kind, status, candidates_found, actions_taken, actions_failed, dry_run, error, started_at, completed_at FROM run_log ORDER BY started_at DESC LIMIT ? OFFSET ?`, pageSize, offset)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var runs []*maintainv1.RunLog
 	for rows.Next() {
 		r, err := scanRunRow(rows)
@@ -429,7 +426,7 @@ func (m *Module) ListRuns(ctx context.Context, req *maintainv1.ListRunsRequest) 
 		}
 		runs = append(runs, r)
 	}
-	return &maintainv1.ListRunsResponse{Runs: runs, Total: int32(total)}, nil
+	return &maintainv1.ListRunsResponse{Runs: runs, Total: int32(total)}, nil //nolint:gosec // run list totals are bounded by pagination
 }
 
 func scanRuleRow(s scanner) (*maintainv1.RuleGroup, error) {
@@ -442,8 +439,8 @@ func scanRuleRow(s scanner) (*maintainv1.RuleGroup, error) {
 	return &maintainv1.RuleGroup{
 		Id: id, Name: name, Enabled: enabled != 0, Scope: toProtoScope(MediaScope(scope)), CollectionId: colID,
 		DefinitionJson: def, Outcome: toProtoOutcome(RuleOutcome(outcome)), ArrAction: toProtoAction(ArrAction(action)),
-		AutoActEnabled: autoAct != 0, AutoActDelayDays: int32(delay), TagEnabled: tagEn != 0, ArrTag: tag,
-		MaxActionsPerRun: int32(maxAct), QualityProfileId: profileID, CreatedAt: created, UpdatedAt: updated,
+		AutoActEnabled: autoAct != 0, AutoActDelayDays: int32(delay), TagEnabled: tagEn != 0, ArrTag: tag, //nolint:gosec // rule settings fit protobuf int32
+		MaxActionsPerRun: int32(maxAct), QualityProfileId: profileID, CreatedAt: created, UpdatedAt: updated, //nolint:gosec // rule settings fit protobuf int32
 	}, nil
 }
 
@@ -454,7 +451,7 @@ func scanCollectionRow(s scanner) (*maintainv1.Collection, error) {
 		return nil, err
 	}
 	return &maintainv1.Collection{
-		Id: id, Name: name, Enabled: enabled != 0, GraceDays: int32(grace), ArrAction: toProtoAction(ArrAction(action)),
+		Id: id, Name: name, Enabled: enabled != 0, GraceDays: int32(grace), ArrAction: toProtoAction(ArrAction(action)), //nolint:gosec // collection settings fit protobuf int32
 		LeavingSoonEnabled: leaving != 0, LeavingSoonLabel: label, CreatedAt: created, UpdatedAt: updated,
 	}, nil
 }
@@ -469,8 +466,8 @@ func scanCandidateRow(s scanner) (*maintainv1.Candidate, error) {
 	var ruleIDs []string
 	_ = json.Unmarshal([]byte(rules), &ruleIDs)
 	return &maintainv1.Candidate{
-		Id: id, Scope: toProtoScope(MediaScope(scope)), ItemId: itemID, Title: title, Year: int32(year),
-		TmdbId: int32(tmdb), ImdbId: imdb, MatchedRuleIds: ruleIDs, ArrAction: toProtoAction(ArrAction(action)),
+		Id: id, Scope: toProtoScope(MediaScope(scope)), ItemId: itemID, Title: title, Year: int32(year), //nolint:gosec // candidate metadata fits protobuf int32
+		TmdbId: int32(tmdb), ImdbId: imdb, MatchedRuleIds: ruleIDs, ArrAction: toProtoAction(ArrAction(action)), //nolint:gosec // candidate metadata fits protobuf int32
 		Status: toProtoCandidateStatus(CandidateStatus(status)), CollectionId: colID, AddedAt: added,
 		ActAfter: actAfter, PostponedUntil: postponed, CompletedAt: completed, Error: errStr,
 		CriteriaJson: criteria, SizeBytes: size,
@@ -495,8 +492,8 @@ func scanRunRow(s scanner) (*maintainv1.RunLog, error) {
 		return nil, err
 	}
 	return &maintainv1.RunLog{
-		Id: id, Kind: kind, Status: status, CandidatesFound: int32(found), ActionsTaken: int32(taken),
-		ActionsFailed: int32(failed), DryRun: dry != 0, Error: errStr, StartedAt: started, CompletedAt: completed,
+		Id: id, Kind: kind, Status: status, CandidatesFound: int32(found), ActionsTaken: int32(taken), //nolint:gosec // run log counters fit protobuf int32
+		ActionsFailed: int32(failed), DryRun: dry != 0, Error: errStr, StartedAt: started, CompletedAt: completed, //nolint:gosec // run log counters fit protobuf int32
 	}, nil
 }
 
@@ -507,8 +504,8 @@ type scanner interface {
 func evalToCandidate(ec EvalContext, action ArrAction, ruleIDs []string) *maintainv1.Candidate {
 	criteria, _ := json.Marshal(ec)
 	return &maintainv1.Candidate{
-		Scope: toProtoScope(ec.Scope), ItemId: ec.ItemID, Title: ec.Title, Year: int32(ec.Year),
-		TmdbId: int32(ec.TmdbID), ImdbId: ec.ImdbID, MatchedRuleIds: ruleIDs, ArrAction: toProtoAction(action),
+		Scope: toProtoScope(ec.Scope), ItemId: ec.ItemID, Title: ec.Title, Year: int32(ec.Year), //nolint:gosec // candidate metadata fits protobuf int32
+		TmdbId: int32(ec.TmdbID), ImdbId: ec.ImdbID, MatchedRuleIds: ruleIDs, ArrAction: toProtoAction(action), //nolint:gosec // candidate metadata fits protobuf int32
 		CriteriaJson: string(criteria), SizeBytes: ec.FileSizeBytes,
 	}
 }

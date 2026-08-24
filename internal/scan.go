@@ -13,34 +13,34 @@ import (
 )
 
 type storedRule struct {
-	ID                string
-	Name              string
-	Enabled           bool
-	Scope             MediaScope
-	CollectionID      string
-	DefinitionJSON    string
-	Outcome           RuleOutcome
-	ArrAction         ArrAction
-	AutoActEnabled    bool
-	AutoActDelayDays  int
-	TagEnabled        bool
-	ArrTag            string
-	MaxActionsPerRun  int
-	QualityProfileID  string
+	Outcome          RuleOutcome
+	ArrTag           string
+	QualityProfileID string
+	Scope            MediaScope
+	CollectionID     string
+	DefinitionJSON   string
+	ArrAction        ArrAction
+	ID               string
+	Name             string
+	MaxActionsPerRun int
+	AutoActDelayDays int
+	TagEnabled       bool
+	AutoActEnabled   bool
+	Enabled          bool
 }
 
-func (m *Module) loadEnabledRules() []storedRule {
+func (m *Module) loadEnabledRules(ctx context.Context) []storedRule {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
 	if db == nil {
 		return nil
 	}
-	rows, err := db.Query(`SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,'') FROM rule_groups WHERE enabled = 1 ORDER BY name`)
+	rows, err := db.QueryContext(ctx, `SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,'') FROM rule_groups WHERE enabled = 1 ORDER BY name`)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var rules []storedRule
 	for rows.Next() {
 		var r storedRule
@@ -57,7 +57,7 @@ func (m *Module) loadEnabledRules() []storedRule {
 }
 
 func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
-	protected := m.loadProtectionSet()
+	protected := m.loadProtectionSet(ctx)
 	requests := m.loadRequestIndex(ctx)
 
 	var out []EvalContext
@@ -75,32 +75,32 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 			for _, mv := range resp.GetMovies() {
 				ws := m.watchStatsForItem(ctx, mv.GetId(), int(mv.GetRuntime()))
 				req := requests["movie:"+mv.GetId()]
-				if req.Requested == false {
+				if !req.Requested {
 					req = requests[fmt.Sprintf("movie:%d", mv.GetTmdbId())]
 				}
 				added := parseTimeRFC(mv.GetCreatedAt())
 				files := m.listMovieFiles(ctx, mv.GetId())
 				ctxItem := EvalContext{
-					Scope:            ScopeMovie,
-					ItemID:           mv.GetId(),
-					Title:            mv.GetTitle(),
-					Year:             int(mv.GetYear()),
-					TmdbID:           int(mv.GetTmdbId()),
-					ImdbID:           mv.GetImdbId(),
-					Genres:           mv.GetGenres(),
-					Monitored:        mv.GetMonitored(),
-					HasFile:          mv.GetHasFile(),
-					AddedAt:          added,
-					VoteAverage:      mv.GetVoteAverage(),
-					QualityProfile:   mv.GetQualityProfileId(),
-					RootFolderPath:   mv.GetRootFolderPath(),
-					Requested:          req.Requested,
-					RequestedBy:        req.RequestedBy,
-					DaysSinceRequest:   daysSince(req.CreatedAt),
-					DiskFreePercent:    diskFreePercent(mv.GetRootFolderPath()),
-					Protected:          protected[string(ScopeMovie)+":"+mv.GetId()],
-					RuntimeMinutes:     int(mv.GetRuntime()),
-					MovieVersionCount:  len(files),
+					Scope:             ScopeMovie,
+					ItemID:            mv.GetId(),
+					Title:             mv.GetTitle(),
+					Year:              int(mv.GetYear()),
+					TmdbID:            int(mv.GetTmdbId()),
+					ImdbID:            mv.GetImdbId(),
+					Genres:            mv.GetGenres(),
+					Monitored:         mv.GetMonitored(),
+					HasFile:           mv.GetHasFile(),
+					AddedAt:           added,
+					VoteAverage:       mv.GetVoteAverage(),
+					QualityProfile:    mv.GetQualityProfileId(),
+					RootFolderPath:    mv.GetRootFolderPath(),
+					Requested:         req.Requested,
+					RequestedBy:       req.RequestedBy,
+					DaysSinceRequest:  daysSince(req.CreatedAt),
+					DiskFreePercent:   diskFreePercent(mv.GetRootFolderPath()),
+					Protected:         protected[string(ScopeMovie)+":"+mv.GetId()],
+					RuntimeMinutes:    int(mv.GetRuntime()),
+					MovieVersionCount: len(files),
 				}
 				applyWatchStats(&ctxItem, ws)
 				if req.Requested && req.RequestedBy != "" {
@@ -127,7 +127,7 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 					out = append(out, fileCtx)
 				}
 			}
-			if int32(len(resp.GetMovies())) < 100 || page*100 >= resp.GetTotal() {
+			if int32(len(resp.GetMovies())) < 100 || page*100 >= resp.GetTotal() { //nolint:gosec // page sizes are bounded list requests
 				break
 			}
 			page++
@@ -140,30 +140,30 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 		m.mu.RUnlock()
 		page := int32(1)
 		for {
-			resp, err := tc.ListTVShows(ctx, &tvmgmtv1.ListTVShowsRequest{Page: page, PageSize: 50})
-			if err != nil {
+			resp, listErr := tc.ListTVShows(ctx, &tvmgmtv1.ListTVShowsRequest{Page: page, PageSize: 50})
+			if listErr != nil {
 				break
 			}
 			for _, sr := range resp.GetSeries() {
 				seriesCtx := EvalContext{
-					Scope:            ScopeSeries,
-					ItemID:           sr.GetId(),
-					Title:            sr.GetName(),
-					Year:             int(sr.GetYear()),
-					TmdbID:           int(sr.GetTmdbId()),
-					Genres:           sr.GetGenres(),
-					Monitored:        sr.GetMonitored(),
-					HasFile:          sr.GetTotalEpisodes() > 0,
-					AddedAt:          parseTimeRFC(sr.GetCreatedAt()),
-					VoteAverage:      sr.GetVoteAverage(),
-					QualityProfile:   sr.GetQualityProfileId(),
-					RootFolderPath:   sr.GetRootFolderPath(),
-					SeriesType:       sr.GetSeriesType(),
-					SeriesStatus:     sr.GetStatus(),
-					FirstAirDate:     parseDateYMD(sr.GetFirstAirDate()),
-					LastAirDate:      parseDateYMD(sr.GetLastAirDate()),
-					SeasonCount:      len(sr.GetSeasons()),
-					Protected:        protected[string(ScopeSeries)+":"+sr.GetId()],
+					Scope:          ScopeSeries,
+					ItemID:         sr.GetId(),
+					Title:          sr.GetName(),
+					Year:           int(sr.GetYear()),
+					TmdbID:         int(sr.GetTmdbId()),
+					Genres:         sr.GetGenres(),
+					Monitored:      sr.GetMonitored(),
+					HasFile:        sr.GetTotalEpisodes() > 0,
+					AddedAt:        parseTimeRFC(sr.GetCreatedAt()),
+					VoteAverage:    sr.GetVoteAverage(),
+					QualityProfile: sr.GetQualityProfileId(),
+					RootFolderPath: sr.GetRootFolderPath(),
+					SeriesType:     sr.GetSeriesType(),
+					SeriesStatus:   sr.GetStatus(),
+					FirstAirDate:   parseDateYMD(sr.GetFirstAirDate()),
+					LastAirDate:    parseDateYMD(sr.GetLastAirDate()),
+					SeasonCount:    len(sr.GetSeasons()),
+					Protected:      protected[string(ScopeSeries)+":"+sr.GetId()],
 				}
 				m.enrichRatings(ctx, &seriesCtx)
 				applyWatchStats(&seriesCtx, m.watchStatsForItem(ctx, sr.GetId(), 0))
@@ -207,13 +207,13 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 					}
 				}
 			}
-			if int32(len(resp.GetSeries())) < 50 || page*50 >= resp.GetTotal() {
+			if int32(len(resp.GetSeries())) < 50 || page*50 >= resp.GetTotal() { //nolint:gosec // page sizes are bounded list requests
 				break
 			}
 			page++
 		}
 	}
-	return out, nil
+	return out, nil //nolint:nilerr // partial inventory is returned when one arr client fails
 }
 
 func parseDateYMD(s string) time.Time {
@@ -277,7 +277,7 @@ func (m *Module) listMovieFiles(ctx context.Context, movieID string) []movieFile
 	return out
 }
 
-func (m *Module) loadProtectionSet() map[string]bool {
+func (m *Module) loadProtectionSet(ctx context.Context) map[string]bool {
 	out := make(map[string]bool)
 	m.mu.RLock()
 	db := m.db
@@ -286,11 +286,11 @@ func (m *Module) loadProtectionSet() map[string]bool {
 		return out
 	}
 	now := time.Now().UTC()
-	rows, err := db.Query(`SELECT scope, item_id, expires_at FROM protections`)
+	rows, err := db.QueryContext(ctx, `SELECT scope, item_id, expires_at FROM protections`)
 	if err != nil {
 		return out
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var scope, itemID, expires string
 		if err := rows.Scan(&scope, &itemID, &expires); err != nil {
@@ -328,7 +328,7 @@ func (m *Module) evaluateRules(ctx context.Context, rules []storedRule, contexts
 				continue
 			}
 			if m.shouldProtectUnwatchedRequester(ec) {
-				m.upsertProtection(ec, "requester_unwatched", "")
+				m.upsertProtection(ctx, ec, "requester_unwatched", "")
 				continue
 			}
 			ok, err := evaluateRule(def, ec)
@@ -337,7 +337,7 @@ func (m *Module) evaluateRules(ctx context.Context, rules []storedRule, contexts
 			}
 			key := string(ec.Scope) + ":" + ec.ItemID
 			if rule.Outcome == OutcomeProtect {
-				m.upsertProtection(ec, "rule:"+rule.ID, "")
+				m.upsertProtection(ctx, ec, "rule:"+rule.ID, "")
 				continue
 			}
 			cur, exists := matches[key]
@@ -367,27 +367,27 @@ func (m *Module) evaluateRules(ctx context.Context, rules []storedRule, contexts
 }
 
 type candidateMatch struct {
-	Ctx              EvalContext
-	RuleIDs          []string
 	Action           ArrAction
 	CollectionID     string
-	AutoActDelayDays int
-	TagEnabled       bool
 	ArrTag           string
 	QualityProfileID string
+	RuleIDs          []string
+	Ctx              EvalContext
+	AutoActDelayDays int
+	TagEnabled       bool
 }
 
-func (m *Module) upsertProtection(ctx EvalContext, reason, expiresAt string) {
+func (m *Module) upsertProtection(ctx context.Context, ec EvalContext, reason, expiresAt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	id := fmt.Sprintf("prot_%s_%s", ctx.Scope, ctx.ItemID)
+	id := fmt.Sprintf("prot_%s_%s", ec.Scope, ec.ItemID)
 	now := nowRFC()
-	_, _ = m.db.Exec(`INSERT INTO protections (id, scope, item_id, title, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, _ = m.db.ExecContext(ctx, `INSERT INTO protections (id, scope, item_id, title, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scope, item_id) DO UPDATE SET title=excluded.title, reason=excluded.reason, expires_at=excluded.expires_at`,
-		id, ctx.Scope, ctx.ItemID, ctx.Title, reason, expiresAt, now)
+		id, ec.Scope, ec.ItemID, ec.Title, reason, expiresAt, now)
 }
 
 func (m *Module) persistCandidates(ctx context.Context, matches map[string]candidateMatch, dryRun bool) int {
@@ -413,12 +413,12 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 		}
 		status := StatusPending
 		if match.CollectionID != "" {
-			if col := m.loadCollectionLocked(match.CollectionID); col != nil && col.LeavingSoonEnabled {
+			if col := m.loadCollectionLocked(ctx, match.CollectionID); col != nil && col.LeavingSoonEnabled {
 				status = StatusLeavingSoon
 			}
 		}
 		id := newID("cand")
-		res, err := m.db.Exec(`INSERT INTO candidates (id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, criteria_json, size_bytes)
+		res, err := m.db.ExecContext(ctx, `INSERT INTO candidates (id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, criteria_json, size_bytes)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(scope, item_id) DO UPDATE SET
 				matched_rule_ids=excluded.matched_rule_ids,
@@ -440,7 +440,7 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 				m.applyCandidateTag(ctx, match)
 			}
 			if status == StatusLeavingSoon && match.CollectionID != "" {
-				if col := m.loadCollectionLocked(match.CollectionID); col != nil {
+				if col := m.loadCollectionLocked(ctx, match.CollectionID); col != nil {
 					label := col.LeavingSoonLabel
 					if label == "" {
 						label = "Leaving Soon"
@@ -457,19 +457,19 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 }
 
 type storedCollection struct {
-	ID                 string
-	Name               string
-	Enabled            bool
-	GraceDays          int
-	ArrAction          ArrAction
-	LeavingSoonEnabled   bool
+	ID                   string
+	Name                 string
+	ArrAction            ArrAction
 	LeavingSoonLabel     string
 	JellyfinCollectionID string
 	PlexCollectionKey    string
+	GraceDays            int
+	Enabled              bool
+	LeavingSoonEnabled   bool
 }
 
-func (m *Module) loadCollectionLocked(id string) *storedCollection {
-	row := m.db.QueryRow(`SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, COALESCE(jellyfin_collection_id,''), COALESCE(plex_collection_key,'') FROM collections WHERE id = ?`, id)
+func (m *Module) loadCollectionLocked(ctx context.Context, id string) *storedCollection {
+	row := m.db.QueryRowContext(ctx, `SELECT id, name, enabled, grace_days, arr_action, leaving_soon_enabled, leaving_soon_label, COALESCE(jellyfin_collection_id,''), COALESCE(plex_collection_key,'') FROM collections WHERE id = ?`, id)
 	var c storedCollection
 	var enabled, leaving int
 	if err := row.Scan(&c.ID, &c.Name, &enabled, &c.GraceDays, &c.ArrAction, &leaving, &c.LeavingSoonLabel, &c.JellyfinCollectionID, &c.PlexCollectionKey); err != nil {
@@ -482,14 +482,14 @@ func (m *Module) loadCollectionLocked(id string) *storedCollection {
 
 func (m *Module) runScan(ctx context.Context, dryRun bool) (int, error) {
 	_, _, _ = m.syncExclusionLists(ctx)
-	rules := m.loadEnabledRules()
+	rules := m.loadEnabledRules(ctx)
 	contexts, err := m.buildEvalContexts(ctx)
 	if err != nil {
 		return 0, err
 	}
-	excluded := m.loadExclusionTMDBSet()
-	importExcluded := m.loadImportExclusionSet()
-	jwPolicies := m.loadJustWatchPolicies()
+	excluded := m.loadExclusionTMDBSet(ctx)
+	importExcluded := m.loadImportExclusionSet(ctx)
+	jwPolicies := m.loadJustWatchPolicies(ctx)
 	matches := m.evaluateRules(ctx, rules, contexts, excluded, importExcluded, jwPolicies)
 	return m.persistCandidates(ctx, matches, dryRun), nil
 }

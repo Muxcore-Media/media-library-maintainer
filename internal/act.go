@@ -21,16 +21,16 @@ type storedCandidate struct {
 	CollectionID     string
 	ActAfter         string
 	PostponedUntil   string
-	SizeBytes        int64
 	CriteriaJSON     string
 	QualityProfileID string
+	SizeBytes        int64
 }
 
 type actOptions struct {
-	dryRun             bool
-	maxActions         int
-	freeUp             bool
-	targetFreePercent  float64
+	maxActions        int
+	targetFreePercent float64
+	dryRun            bool
+	freeUp            bool
 }
 
 func (m *Module) runAct(ctx context.Context, opts actOptions) (taken, failed int, err error) {
@@ -39,9 +39,9 @@ func (m *Module) runAct(ctx context.Context, opts actOptions) (taken, failed int
 	}
 	var cands []storedCandidate
 	if opts.freeUp {
-		cands = m.loadFreeUpCandidates(opts.maxActions)
+		cands = m.loadFreeUpCandidates(ctx, opts.maxActions)
 	} else {
-		cands = m.loadActionableCandidates(opts.maxActions)
+		cands = m.loadActionableCandidates(ctx, opts.maxActions)
 	}
 	freeUpRoot := m.getFreeUpRootPath()
 	for _, c := range cands {
@@ -68,7 +68,7 @@ func (m *Module) runAct(ctx context.Context, opts actOptions) (taken, failed int
 		actErr := m.executeAction(ctx, c)
 		if actErr != nil {
 			failed++
-			m.markCandidateFailed(c.ID, actErr.Error())
+			m.markCandidateFailed(ctx, c.ID, actErr.Error())
 			slog.Warn("maintainer action failed", "item", c.ItemID, "error", actErr)
 			continue
 		}
@@ -86,7 +86,7 @@ func parseEvalContext(raw string) EvalContext {
 	return ec
 }
 
-func (m *Module) loadActionableCandidates(limit int) []storedCandidate {
+func (m *Module) loadActionableCandidates(ctx context.Context, limit int) []storedCandidate {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
@@ -94,7 +94,7 @@ func (m *Module) loadActionableCandidates(limit int) []storedCandidate {
 		return nil
 	}
 	now := nowRFC()
-	rows, err := db.Query(`SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
 		FROM candidates
 		WHERE status IN ('approved','leaving_soon','pending')
 		  AND (postponed_until = '' OR postponed_until <= ?)
@@ -103,30 +103,30 @@ func (m *Module) loadActionableCandidates(limit int) []storedCandidate {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	return m.filterActionableCandidates(rows, false)
+	defer func() { _ = rows.Close() }()
+	return m.filterActionableCandidates(ctx, rows, false)
 }
 
-func (m *Module) loadFreeUpCandidates(limit int) []storedCandidate {
+func (m *Module) loadFreeUpCandidates(ctx context.Context, limit int) []storedCandidate {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
 	if db == nil {
 		return nil
 	}
-	rows, err := db.Query(`SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
 		FROM candidates
 		WHERE status IN ('approved','leaving_soon','pending')
 		ORDER BY size_bytes DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	return m.filterActionableCandidates(rows, true)
+	defer func() { _ = rows.Close() }()
+	return m.filterActionableCandidates(ctx, rows, true)
 }
 
-func (m *Module) filterActionableCandidates(rows sqlRows, freeUp bool) []storedCandidate {
-	defer rows.Close()
+func (m *Module) filterActionableCandidates(ctx context.Context, rows sqlRows, freeUp bool) []storedCandidate {
+	defer func() { _ = rows.Close() }()
 	var out []storedCandidate
 	for rows.Next() {
 		var c storedCandidate
@@ -138,7 +138,7 @@ func (m *Module) filterActionableCandidates(rows sqlRows, freeUp bool) []storedC
 			continue
 		}
 		if c.Status == StatusPending {
-			if col := m.loadCollectionByID(c.CollectionID); col != nil && !col.Enabled {
+			if col := m.loadCollectionByID(ctx, c.CollectionID); col != nil && !col.Enabled {
 				continue
 			}
 			if !m.getAutoActEnabled() {
@@ -156,13 +156,13 @@ type sqlRows interface {
 	Close() error
 }
 
-func (m *Module) loadCollectionByID(id string) *storedCollection {
+func (m *Module) loadCollectionByID(ctx context.Context, id string) *storedCollection {
 	if id == "" {
 		return nil
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.loadCollectionLocked(id)
+	return m.loadCollectionLocked(ctx, id)
 }
 
 func (m *Module) executeAction(ctx context.Context, c storedCandidate) error {
@@ -348,7 +348,7 @@ func (m *Module) removeCandidateFromJellyfin(ctx context.Context, c storedCandid
 	if c.CollectionID == "" {
 		return
 	}
-	col := m.loadCollectionByID(c.CollectionID)
+	col := m.loadCollectionByID(ctx, c.CollectionID)
 	if col == nil {
 		return
 	}
@@ -363,37 +363,37 @@ func (m *Module) markCandidateCompleted(ctx context.Context, c storedCandidate) 
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`UPDATE candidates SET status = ?, completed_at = ?, error = '' WHERE id = ?`, StatusCompleted, nowRFC(), c.ID)
+	_, _ = m.db.ExecContext(ctx, `UPDATE candidates SET status = ?, completed_at = ?, error = '' WHERE id = ?`, StatusCompleted, nowRFC(), c.ID)
 }
 
-func (m *Module) markCandidateFailed(id, msg string) {
+func (m *Module) markCandidateFailed(ctx context.Context, id, msg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`UPDATE candidates SET status = ?, error = ?, completed_at = ? WHERE id = ?`, StatusFailed, msg, nowRFC(), id)
+	_, _ = m.db.ExecContext(ctx, `UPDATE candidates SET status = ?, error = ?, completed_at = ? WHERE id = ?`, StatusFailed, msg, nowRFC(), id)
 }
 
-func (m *Module) startRun(kind string, dryRun bool) string {
+func (m *Module) startRun(ctx context.Context, kind string, dryRun bool) string {
 	id := newID("run")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return id
 	}
-	_, _ = m.db.Exec(`INSERT INTO run_log (id, kind, status, dry_run, started_at) VALUES (?, ?, 'running', ?, ?)`,
+	_, _ = m.db.ExecContext(ctx, `INSERT INTO run_log (id, kind, status, dry_run, started_at) VALUES (?, ?, 'running', ?, ?)`,
 		id, kind, boolToInt(dryRun), nowRFC())
 	return id
 }
 
-func (m *Module) finishRun(id, status string, found, taken, failed int, errMsg string) {
+func (m *Module) finishRun(ctx context.Context, id, status string, found, taken, failed int, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`UPDATE run_log SET status = ?, candidates_found = ?, actions_taken = ?, actions_failed = ?, error = ?, completed_at = ? WHERE id = ?`,
+	_, _ = m.db.ExecContext(ctx, `UPDATE run_log SET status = ?, candidates_found = ?, actions_taken = ?, actions_failed = ?, error = ?, completed_at = ? WHERE id = ?`,
 		status, found, taken, failed, errMsg, nowRFC(), id)
 }
 

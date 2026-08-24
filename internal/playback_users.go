@@ -14,8 +14,7 @@ import (
 )
 
 func (m *Module) ListPlaybackUsers(ctx context.Context, req *maintainv1.ListPlaybackUsersRequest) (*maintainv1.ListPlaybackUsersResponse, error) {
-	_ = ctx
-	users := m.listPlaybackUsers(req.GetQuery(), int(req.GetLimit()))
+	users := m.listPlaybackUsers(ctx, req.GetQuery(), int(req.GetLimit()))
 	out := make([]*maintainv1.PlaybackUser, 0, len(users))
 	for _, u := range users {
 		out = append(out, &maintainv1.PlaybackUser{Username: u})
@@ -23,14 +22,14 @@ func (m *Module) ListPlaybackUsers(ctx context.Context, req *maintainv1.ListPlay
 	return &maintainv1.ListPlaybackUsersResponse{Users: out}, nil
 }
 
-func (m *Module) listPlaybackUsers(query string, limit int) []string {
+func (m *Module) listPlaybackUsers(ctx context.Context, query string, limit int) []string {
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > 500 {
 		limit = 500
 	}
-	if users, ok := m.listPlaybackUsersFromMonitor(context.Background(), query, limit); ok {
+	if users, ok := m.listPlaybackUsersFromMonitor(ctx, query, limit); ok {
 		return users
 	}
 	return m.listPlaybackUsersFromUserdata(query, limit)
@@ -48,7 +47,7 @@ func (m *Module) listPlaybackUsersFromMonitor(ctx context.Context, query string,
 	}
 	resp, err := client.ListWatchUsers(ctx, &monitorv1.ListWatchUsersRequest{
 		Query: query,
-		Limit: int32(limit),
+		Limit: int32(limit), //nolint:gosec // list limits are bounded to 500 in caller
 	})
 	if err != nil {
 		return nil, false
@@ -77,7 +76,7 @@ func (m *Module) listPlaybackUsersFromUserdata(query string, limit int) []string
 	seen := make(map[string]string)
 	for _, path := range listJSONFiles(dir) {
 		user := playbackUserFromPath(path)
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) //nolint:gosec // userdata paths are resolved from local store layout
 		if err == nil {
 			var blob store.Blob
 			if json.Unmarshal(b, &blob) == nil && strings.TrimSpace(blob.UserID) != "" {

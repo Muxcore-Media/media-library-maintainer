@@ -14,10 +14,10 @@ import (
 )
 
 type historyRecord struct {
+	Data       map[string]any `json:"data"`
 	EventType  string         `json:"eventType"`
 	DownloadID string         `json:"downloadId"`
 	EpisodeID  int            `json:"episodeId"`
-	Data       map[string]any `json:"data"`
 }
 
 func (m *Module) resolveDownloadIDs(ctx context.Context, scope MediaScope, ec EvalContext) []string {
@@ -152,7 +152,7 @@ func (m *Module) servarrRequest(ctx context.Context, base, key, method, path str
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	return raw, resp.StatusCode, err
 }

@@ -12,7 +12,7 @@ func (m *Module) notifyLeavingSoon(ctx context.Context, ec EvalContext, actAfter
 	if !m.getLeavingSoonNotifyEnabled() {
 		return
 	}
-	if m.alreadyNotifiedLeavingSoon(ec.Scope, ec.ItemID) {
+	if m.alreadyNotifiedLeavingSoon(ctx, ec.Scope, ec.ItemID) {
 		return
 	}
 	title := "Leaving soon: " + ec.Title
@@ -29,10 +29,10 @@ func (m *Module) notifyLeavingSoon(ctx context.Context, ec EvalContext, actAfter
 		"act_after": actAfter,
 		"label":     label,
 	})
-	m.markLeavingSoonNotified(ec.Scope, ec.ItemID)
+	m.markLeavingSoonNotified(ctx, ec.Scope, ec.ItemID)
 }
 
-func (m *Module) alreadyNotifiedLeavingSoon(scope MediaScope, itemID string) bool {
+func (m *Module) alreadyNotifiedLeavingSoon(ctx context.Context, scope MediaScope, itemID string) bool {
 	m.mu.RLock()
 	db := m.db
 	m.mu.RUnlock()
@@ -40,17 +40,17 @@ func (m *Module) alreadyNotifiedLeavingSoon(scope MediaScope, itemID string) boo
 		return false
 	}
 	var n int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM leaving_soon_notified WHERE scope = ? AND item_id = ?`, scope, itemID).Scan(&n)
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM leaving_soon_notified WHERE scope = ? AND item_id = ?`, scope, itemID).Scan(&n)
 	return n > 0
 }
 
-func (m *Module) markLeavingSoonNotified(scope MediaScope, itemID string) {
+func (m *Module) markLeavingSoonNotified(ctx context.Context, scope MediaScope, itemID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {
 		return
 	}
-	_, _ = m.db.Exec(`INSERT INTO leaving_soon_notified (scope, item_id, notified_at) VALUES (?, ?, ?)
+	_, _ = m.db.ExecContext(ctx, `INSERT INTO leaving_soon_notified (scope, item_id, notified_at) VALUES (?, ?, ?)
 		ON CONFLICT(scope, item_id) DO UPDATE SET notified_at=excluded.notified_at`, scope, itemID, nowRFC())
 }
 

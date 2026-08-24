@@ -9,10 +9,10 @@ import (
 )
 
 type overlayStyle struct {
+	DateFormat    string
 	BarColor      color.RGBA
 	PillColor     color.RGBA
 	PillTextColor color.RGBA
-	DateFormat    string
 	UseDays       bool
 }
 
@@ -81,7 +81,7 @@ func parseOverlayColor(raw string, fallback color.RGBA) color.RGBA {
 		if len(parts) >= 4 {
 			a, _ = strconv.Atoi(strings.TrimSpace(parts[3]))
 		}
-		return color.RGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: uint8(a)}
+		return color.RGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: uint8(a)} //nolint:gosec // overlay colors are parsed from 0-255 config values
 	}
 	return fallback
 }

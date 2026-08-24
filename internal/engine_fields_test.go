@@ -8,10 +8,10 @@ import (
 
 func TestNormalizeRuleFieldAliases(t *testing.T) {
 	cases := map[string]string{
-		"trakt.rating":                    "ratings.trakt",
-		"seerr.requested":                 "request.is_requested",
-		"movie.version_count":             "media.version_count",
-		"tmdb.days_since_first_air_date":  "tmdb.days_since_first_air_date",
+		"trakt.rating":                   "ratings.trakt",
+		"seerr.requested":                "request.is_requested",
+		"movie.version_count":            "media.version_count",
+		"tmdb.days_since_first_air_date": "tmdb.days_since_first_air_date",
 	}
 	for in, want := range cases {
 		if got := normalizeRuleField(in); got != want {

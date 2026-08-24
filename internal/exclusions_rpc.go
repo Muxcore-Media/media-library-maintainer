@@ -15,11 +15,11 @@ func (m *Module) ListExclusionLists(ctx context.Context, req *maintainv1.ListExc
 	if m.db == nil {
 		return &maintainv1.ListExclusionListsResponse{}, nil
 	}
-	rows, err := m.db.Query(`SELECT id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at FROM exclusion_lists ORDER BY name`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at FROM exclusion_lists ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var lists []*maintainv1.ExclusionList
 	for rows.Next() {
 		l, err := scanExclusionListRow(rows)
@@ -52,7 +52,7 @@ func (m *Module) UpsertExclusionList(ctx context.Context, req *maintainv1.Upsert
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`INSERT INTO exclusion_lists (id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at)
+	_, err := m.db.ExecContext(ctx, `INSERT INTO exclusion_lists (id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, list_url=excluded.list_url,
 			api_key=excluded.api_key, tmdb_ids_json=CASE WHEN excluded.tmdb_ids_json != '[]' THEN excluded.tmdb_ids_json ELSE exclusion_lists.tmdb_ids_json END`,
@@ -60,10 +60,10 @@ func (m *Module) UpsertExclusionList(ctx context.Context, req *maintainv1.Upsert
 	if err != nil {
 		return nil, err
 	}
-	row := m.db.QueryRow(`SELECT id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at FROM exclusion_lists WHERE id = ?`, id)
-	l, err := scanExclusionListRow(row)
-	if err != nil {
-		return nil, err
+	row := m.db.QueryRowContext(ctx, `SELECT id, name, type, list_url, api_key, tmdb_ids_json, last_synced, created_at FROM exclusion_lists WHERE id = ?`, id)
+	l, scanErr := scanExclusionListRow(row)
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	return &maintainv1.UpsertExclusionListResponse{List: l}, nil
 }
@@ -71,7 +71,7 @@ func (m *Module) UpsertExclusionList(ctx context.Context, req *maintainv1.Upsert
 func (m *Module) DeleteExclusionList(ctx context.Context, req *maintainv1.DeleteExclusionListRequest) (*maintainv1.DeleteExclusionListResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.db.Exec(`DELETE FROM exclusion_lists WHERE id = ?`, req.GetId())
+	_, err := m.db.ExecContext(ctx, `DELETE FROM exclusion_lists WHERE id = ?`, req.GetId())
 	return &maintainv1.DeleteExclusionListResponse{}, err
 }
 
@@ -80,7 +80,7 @@ func (m *Module) SyncExclusionLists(ctx context.Context, req *maintainv1.SyncExc
 	if err != nil {
 		return nil, err
 	}
-	return &maintainv1.SyncExclusionListsResponse{ListsSynced: int32(synced), IdsLoaded: int32(loaded)}, nil
+	return &maintainv1.SyncExclusionListsResponse{ListsSynced: int32(synced), IdsLoaded: int32(loaded)}, nil //nolint:gosec // sync counters fit protobuf int32
 }
 
 func (m *Module) ExportRules(ctx context.Context, req *maintainv1.ExportRulesRequest) (*maintainv1.ExportRulesResponse, error) {
@@ -89,15 +89,15 @@ func (m *Module) ExportRules(ctx context.Context, req *maintainv1.ExportRulesReq
 	if m.db == nil {
 		return &maintainv1.ExportRulesResponse{RulesJson: "[]"}, nil
 	}
-	rows, err := m.db.Query(`SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups ORDER BY name`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, COALESCE(quality_profile_id,''), created_at, updated_at FROM rule_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var rules []*maintainv1.RuleGroup
 	for rows.Next() {
-		r, err := scanRuleRow(rows)
-		if err != nil {
+		r, scanErr := scanRuleRow(rows)
+		if scanErr != nil {
 			continue
 		}
 		rules = append(rules, r)
@@ -124,7 +124,7 @@ func (m *Module) ImportRules(ctx context.Context, req *maintainv1.ImportRulesReq
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if req.GetReplace() {
-		if _, err := m.db.Exec(`DELETE FROM rule_groups`); err != nil {
+		if _, err := m.db.ExecContext(ctx, `DELETE FROM rule_groups`); err != nil {
 			return nil, err
 		}
 	}
@@ -138,7 +138,7 @@ func (m *Module) ImportRules(ctx context.Context, req *maintainv1.ImportRulesReq
 		if id == "" {
 			id = newID("rule")
 		}
-		_, err := m.db.Exec(`INSERT INTO rule_groups (id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, quality_profile_id, created_at, updated_at)
+		_, err := m.db.ExecContext(ctx, `INSERT INTO rule_groups (id, name, enabled, scope, collection_id, definition_json, outcome, arr_action, auto_act_enabled, auto_act_delay_days, tag_enabled, arr_tag, max_actions_per_run, quality_profile_id, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled, scope=excluded.scope, collection_id=excluded.collection_id,
 				definition_json=excluded.definition_json, outcome=excluded.outcome, arr_action=excluded.arr_action,

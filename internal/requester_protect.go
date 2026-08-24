@@ -34,7 +34,7 @@ func (m *Module) requesterHasWatched(itemID, requester string) bool {
 	}
 	dir := m.userdataDir()
 	for _, path := range m.userdataPathsForUser(dir, userID) {
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) //nolint:gosec // userdata paths are resolved from local store layout
 		if err != nil {
 			continue
 		}
@@ -91,9 +91,9 @@ func (m *Module) userdataPathsForUser(root, userID string) []string {
 			out = append(out, p)
 		}
 	}
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".json") {
-			return nil
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() || !strings.HasSuffix(path, ".json") {
+			return walkErr
 		}
 		if strings.HasSuffix(path, safe+".json") {
 			out = append(out, path)

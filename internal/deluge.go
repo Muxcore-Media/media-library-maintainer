@@ -13,9 +13,9 @@ import (
 )
 
 type delugeClient struct {
+	cli      *http.Client
 	baseURL  string
 	password string
-	cli      *http.Client
 }
 
 func (m *Module) getDelugeURL() string {
@@ -60,16 +60,16 @@ func (d *delugeClient) rpc(ctx context.Context, method string, params []any) (js
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, err
 	}
 	var out struct {
-		Result json.RawMessage `json:"result"`
-		Error  *struct {
+		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Result json.RawMessage `json:"result"`
 	}
 	if json.Unmarshal(raw, &out) != nil {
 		return nil, fmt.Errorf("parse deluge response")
@@ -123,7 +123,7 @@ func (d *delugeClient) removeDownloads(ctx context.Context, downloadIDs []string
 	return nil
 }
 
-func (d *delugeClient) torrentByHash(ctx context.Context, hash string) (name string, ratio float64, done bool, ok bool) {
+func (d *delugeClient) torrentByHash(ctx context.Context, hash string) (name string, ratio float64, done, ok bool) {
 	res, err := d.rpc(ctx, "core.get_torrents_status", []any{map[string]any{"hash": hash}, []string{"name", "ratio", "is_seed", "seeding_time", "total_done", "total_size"}})
 	if err != nil {
 		return "", 0, false, false

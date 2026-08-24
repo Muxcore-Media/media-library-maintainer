@@ -15,21 +15,21 @@ type yamlRulesFile struct {
 }
 
 type yamlRule struct {
-	Name             string         `yaml:"name"`
+	AutoActEnabled   *bool          `yaml:"auto_act_enabled"`
 	Enabled          *bool          `yaml:"enabled"`
-	Scope            string         `yaml:"scope"`
+	TagEnabled       *bool          `yaml:"tag_enabled"`
 	CollectionID     string         `yaml:"collection_id"`
 	Outcome          string         `yaml:"outcome"`
 	Action           string         `yaml:"action"`
 	ArrAction        string         `yaml:"arr_action"`
-	AutoActEnabled   *bool          `yaml:"auto_act_enabled"`
-	AutoActDelayDays int            `yaml:"auto_act_delay_days"`
-	TagEnabled       *bool          `yaml:"tag_enabled"`
+	Name             string         `yaml:"name"`
+	Scope            string         `yaml:"scope"`
 	ArrTag           string         `yaml:"arr_tag"`
-	MaxActionsPerRun int            `yaml:"max_actions_per_run"`
 	QualityProfileID string         `yaml:"quality_profile_id"`
-	Definition       RuleDefinition `yaml:"definition"`
 	DefinitionJSON   string         `yaml:"definition_json"`
+	Definition       RuleDefinition `yaml:"definition"`
+	AutoActDelayDays int            `yaml:"auto_act_delay_days"`
+	MaxActionsPerRun int            `yaml:"max_actions_per_run"`
 }
 
 func parseRulesYAML(raw string) ([]*maintainv1.RuleGroup, error) {
@@ -99,10 +99,10 @@ func yamlRuleToProto(yr yamlRule) (*maintainv1.RuleGroup, error) {
 		Outcome:          yamlOutcome(yr.Outcome),
 		ArrAction:        yamlAction(action),
 		AutoActEnabled:   autoAct,
-		AutoActDelayDays: int32(yr.AutoActDelayDays),
+		AutoActDelayDays: int32(yr.AutoActDelayDays), //nolint:gosec // yaml rule settings fit protobuf int32
 		TagEnabled:       tagEn,
 		ArrTag:           yr.ArrTag,
-		MaxActionsPerRun: int32(maxAct),
+		MaxActionsPerRun: int32(maxAct), //nolint:gosec // yaml rule settings fit protobuf int32
 		QualityProfileId: yr.QualityProfileID,
 	}, nil
 }

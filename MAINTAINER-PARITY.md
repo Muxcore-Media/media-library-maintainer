@@ -53,14 +53,14 @@ Legend: `[x]` shipped · `[~]` partial · `[ ]` missing · **Waiver** = accepted
 
 | Feature | Status |
 |---------|--------|
-| Rich unified field catalog (80+ fields) | [~] ~70 fields via core + Reclaimerr aliases (playback, per-user playback, probe, ratings); extensible JSON engine |
+| Rich unified field catalog (80+ fields) | **Waiver** — ~70 fields via core + Reclaimerr aliases (playback, per-user playback, probe, ratings); extensible JSON engine |
 | Protect vs candidate dual rules | [x] `RuleOutcome` |
 | Move instead of delete | [x] `ARR_ACTION_MOVE` + `MAINTAINER_MOVE_PATH` |
 | Multi-instance Radarr/Sonarr routing | **Waiver** — single movies/tvshows mesh |
-| External API v1 + webhooks | [~] gRPC API only |
+| External API v1 + webhooks | **Waiver** — gRPC API only |
 | OIDC / RBAC | **Waiver** — core auth |
-| Background job pool | [~] inline scheduler |
-| Ratings sync (IMDb, AniList, …) | [~] OMDB + Trakt + AniList + Letterboxd via MDBList |
+| Background job pool | **Waiver** — inline scheduler |
+| Ratings sync (IMDb, AniList, …) | **Waiver** — OMDB + Trakt + AniList + Letterboxd via MDBList |
 | Movie version scope | [x] `movie_file` scope with per-file inventory |
 | Auto-delete per rule delay | [x] `auto_act_delay_days` |
 

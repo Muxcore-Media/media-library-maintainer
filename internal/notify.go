@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -56,12 +57,25 @@ func (m *Module) postNotification(ctx context.Context, title, message, severity 
 	_, err = cli.Notify(ctx, &notificationv1.NotifyRequest{
 		Title:        title,
 		Message:      message,
-		Severity:     severity,
+		Severity:     parseNotifySeverity(severity),
 		SourceModule: m.id,
 		Fields:       fields,
 	})
 	if err != nil {
 		slog.Debug("maintainer: notify failed", "error", err)
+	}
+}
+
+func parseNotifySeverity(s string) notificationv1.Severity {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "success":
+		return notificationv1.Severity_SEVERITY_SUCCESS
+	case "warning":
+		return notificationv1.Severity_SEVERITY_WARNING
+	case "error":
+		return notificationv1.Severity_SEVERITY_ERROR
+	default:
+		return notificationv1.Severity_SEVERITY_INFO
 	}
 }
 

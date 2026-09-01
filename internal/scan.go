@@ -186,7 +186,7 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 					seasonCtx.Monitored = season.GetMonitored()
 					seasonCtx.FirstAirDate = parseDateYMD(season.GetAirDate())
 					seasonCtx.Protected = protected[string(ScopeSeason)+":"+season.GetId()]
-					out = append(out, seasonCtx)
+					var seasonSize int64
 
 					for _, ep := range season.GetEpisodes() {
 						if !ep.GetHasFile() {
@@ -203,8 +203,18 @@ func (m *Module) buildEvalContexts(ctx context.Context) ([]EvalContext, error) {
 						epCtx.EpisodeAirDate = parseDateYMD(ep.GetAirDate())
 						epCtx.Protected = protected[string(ScopeEpisode)+":"+ep.GetId()]
 						applyWatchStats(&epCtx, m.watchStatsForItem(ctx, ep.GetId(), 0))
+						if f := m.episodeFileDetails(ctx, epCtx.TmdbID, epCtx.SeasonNumber, epCtx.EpisodeNumber, ep.GetId()); f.Path != "" || f.SizeBytes > 0 {
+							epCtx.FilePath = f.Path
+							epCtx.FileSizeBytes = f.SizeBytes
+							epCtx.FileQuality = f.Quality
+							applyMediaProbe(&epCtx, f.Path, f.Quality, f.Container)
+							m.enrichFileProbe(ctx, &epCtx)
+							seasonSize += f.SizeBytes
+						}
 						out = append(out, epCtx)
 					}
+					seasonCtx.FileSizeBytes = seasonSize
+					out = append(out, seasonCtx)
 				}
 			}
 			if int32(len(resp.GetSeries())) < 50 || page*50 >= resp.GetTotal() { //nolint:gosec // page sizes are bounded list requests
@@ -408,14 +418,18 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 		criteria, _ := json.Marshal(match.Ctx)
 		now := nowRFC()
 		actAfter := now
-		if match.AutoActDelayDays > 0 {
-			actAfter = time.Now().UTC().Add(time.Duration(match.AutoActDelayDays) * 24 * time.Hour).Format(time.RFC3339)
-		}
 		status := StatusPending
 		if match.CollectionID != "" {
-			if col := m.loadCollectionLocked(ctx, match.CollectionID); col != nil && col.LeavingSoonEnabled {
-				status = StatusLeavingSoon
+			if col := m.loadCollectionLocked(ctx, match.CollectionID); col != nil {
+				if col.GraceDays > 0 {
+					actAfter = time.Now().UTC().Add(time.Duration(col.GraceDays) * 24 * time.Hour).Format(time.RFC3339)
+				}
+				if col.LeavingSoonEnabled {
+					status = StatusLeavingSoon
+				}
 			}
+		} else if match.AutoActDelayDays > 0 {
+			actAfter = time.Now().UTC().Add(time.Duration(match.AutoActDelayDays) * 24 * time.Hour).Format(time.RFC3339)
 		}
 		id := newID("cand")
 		res, err := m.db.ExecContext(ctx, `INSERT INTO candidates (id, scope, item_id, title, year, tmdb_id, imdb_id, matched_rule_ids, arr_action, status, collection_id, added_at, act_after, criteria_json, size_bytes)
@@ -425,7 +439,11 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 				arr_action=excluded.arr_action,
 				status=CASE WHEN candidates.status IN ('completed','cancelled') THEN excluded.status ELSE candidates.status END,
 				collection_id=excluded.collection_id,
-				act_after=excluded.act_after,
+				act_after=CASE
+					WHEN candidates.status IN ('completed','cancelled') THEN excluded.act_after
+					WHEN candidates.act_after != '' THEN candidates.act_after
+					ELSE excluded.act_after
+				END,
 				criteria_json=excluded.criteria_json,
 				size_bytes=excluded.size_bytes`,
 			id, match.Ctx.Scope, match.Ctx.ItemID, match.Ctx.Title, match.Ctx.Year, match.Ctx.TmdbID, match.Ctx.ImdbID,

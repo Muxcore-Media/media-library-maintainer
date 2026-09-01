@@ -79,6 +79,7 @@ type Module struct {
 	downloadClientDeleteDataSet  bool
 	downloadClientDeleteData     bool
 	leavingSoonNotifyEnabled     bool
+	schedulerCancel              context.CancelFunc
 }
 
 type Config struct {
@@ -153,12 +154,17 @@ func (m *Module) Start(ctx context.Context) error {
 			slog.Error("media-library-maintainer gRPC error", "error", err)
 		}
 	}()
-	go m.schedulerLoop(context.Background()) //nolint:gosec // module lifecycle goroutine outlives request context
-	go m.dialCore(context.Background())      //nolint:gosec // background mesh dial for module lifetime
+	schedCtx, cancel := context.WithCancel(context.Background())
+	m.schedulerCancel = cancel
+	go m.schedulerLoop(schedCtx)
+	go m.dialCore(context.Background()) //nolint:gosec // background mesh dial for module lifetime
 	return nil
 }
 
 func (m *Module) Stop(ctx context.Context) error {
+	if m.schedulerCancel != nil {
+		m.schedulerCancel()
+	}
 	if m.grpcSrv != nil {
 		m.grpcSrv.GracefulStop()
 	}
@@ -173,6 +179,9 @@ func (m *Module) Stop(ctx context.Context) error {
 	}
 	if m.playbackConn != nil {
 		_ = m.playbackConn.Close()
+	}
+	if m.ffprobeConn != nil {
+		_ = m.ffprobeConn.Close()
 	}
 	if m.mc != nil {
 		_ = m.mc.Close()

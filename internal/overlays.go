@@ -181,7 +181,7 @@ func (m *Module) fetchArtworkPathTyped(ctx context.Context, ec EvalContext, artw
 		return "", err
 	}
 	for _, a := range resp.GetArtwork() {
-		if a.GetType() == artworkType && a.GetUrl() != "" {
+		if a.GetType() == parseArtworkType(artworkType) && a.GetUrl() != "" {
 			return a.GetUrl(), nil
 		}
 	}
@@ -334,7 +334,7 @@ func (m *Module) uploadArtworkOverlay(ctx context.Context, ec EvalContext, img i
 		case ec.ItemID:
 			req = &mediaadminv1.ReplaceArtworkRequest{Data: &mediaadminv1.ReplaceArtworkRequest_ItemId{ItemId: part}}
 		case artworkType:
-			req = &mediaadminv1.ReplaceArtworkRequest{Data: &mediaadminv1.ReplaceArtworkRequest_ArtworkType{ArtworkType: part}}
+			req = &mediaadminv1.ReplaceArtworkRequest{Data: &mediaadminv1.ReplaceArtworkRequest_ArtworkType{ArtworkType: parseArtworkType(part)}}
 		case filename:
 			req = &mediaadminv1.ReplaceArtworkRequest{Data: &mediaadminv1.ReplaceArtworkRequest_Filename{Filename: part}}
 		}
@@ -357,4 +357,23 @@ func (m *Module) uploadArtworkOverlay(ctx context.Context, ec EvalContext, img i
 	}
 	_, err = stream.CloseAndRecv()
 	return err
+}
+
+func parseArtworkType(s string) mediaadminv1.ArtworkType {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "poster":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_POSTER
+	case "background", "backdrop":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_BACKGROUND
+	case "still", "titlecard":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_STILL
+	case "thumb":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_THUMB
+	case "banner":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_BANNER
+	case "logo":
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_LOGO
+	default:
+		return mediaadminv1.ArtworkType_ARTWORK_TYPE_UNSPECIFIED
+	}
 }

@@ -23,6 +23,7 @@ type storedCandidate struct {
 	PostponedUntil   string
 	CriteriaJSON     string
 	QualityProfileID string
+	MatchedRuleIDs   string
 	SizeBytes        int64
 }
 
@@ -94,9 +95,9 @@ func (m *Module) loadActionableCandidates(ctx context.Context, limit int) []stor
 		return nil
 	}
 	now := nowRFC()
-	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json, matched_rule_ids
 		FROM candidates
-		WHERE status IN ('approved','leaving_soon','pending')
+		WHERE status IN ('approved','leaving_soon','pending','postponed')
 		  AND (postponed_until = '' OR postponed_until <= ?)
 		  AND (act_after = '' OR act_after <= ?)
 		ORDER BY act_after ASC LIMIT ?`, now, now, limit)
@@ -114,9 +115,9 @@ func (m *Module) loadFreeUpCandidates(ctx context.Context, limit int) []storedCa
 	if db == nil {
 		return nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json
+	rows, err := db.QueryContext(ctx, `SELECT id, scope, item_id, title, arr_action, status, collection_id, act_after, postponed_until, size_bytes, criteria_json, matched_rule_ids
 		FROM candidates
-		WHERE status IN ('approved','leaving_soon','pending')
+		WHERE status IN ('approved','leaving_soon','pending','postponed')
 		ORDER BY size_bytes DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil
@@ -127,27 +128,67 @@ func (m *Module) loadFreeUpCandidates(ctx context.Context, limit int) []storedCa
 
 func (m *Module) filterActionableCandidates(ctx context.Context, rows sqlRows, freeUp bool) []storedCandidate {
 	defer func() { _ = rows.Close() }()
-	var out []storedCandidate
+	var scanned []storedCandidate
 	for rows.Next() {
 		var c storedCandidate
-		if err := rows.Scan(&c.ID, &c.Scope, &c.ItemID, &c.Title, &c.ArrAction, &c.Status, &c.CollectionID, &c.ActAfter, &c.PostponedUntil, &c.SizeBytes, &c.CriteriaJSON); err != nil {
+		if err := rows.Scan(&c.ID, &c.Scope, &c.ItemID, &c.Title, &c.ArrAction, &c.Status, &c.CollectionID, &c.ActAfter, &c.PostponedUntil, &c.SizeBytes, &c.CriteriaJSON, &c.MatchedRuleIDs); err != nil {
 			continue
 		}
-		if freeUp {
-			out = append(out, c)
-			continue
+		scanned = append(scanned, c)
+	}
+	_ = rows.Close()
+
+	var out []storedCandidate
+	for _, c := range scanned {
+		if c.Status == StatusPostponed {
+			now := nowRFC()
+			if c.PostponedUntil != "" && c.PostponedUntil > now {
+				continue
+			}
 		}
-		if c.Status == StatusPending {
+		if c.Status == StatusPending || c.Status == StatusPostponed {
 			if col := m.loadCollectionByID(ctx, c.CollectionID); col != nil && !col.Enabled {
 				continue
 			}
-			if !m.getAutoActEnabled() {
+			if !m.candidateAutoActAllowed(ctx, c) {
 				continue
 			}
 		}
 		out = append(out, c)
 	}
 	return out
+}
+
+func (m *Module) candidateAutoActAllowed(ctx context.Context, c storedCandidate) bool {
+	if c.Status == StatusApproved || c.Status == StatusLeavingSoon {
+		return true
+	}
+	if c.Status == StatusPostponed {
+		now := nowRFC()
+		if c.PostponedUntil != "" && c.PostponedUntil <= now {
+			return true
+		}
+	}
+	if m.getAutoActEnabled() {
+		return true
+	}
+	var ruleIDs []string
+	if err := json.Unmarshal([]byte(c.MatchedRuleIDs), &ruleIDs); err != nil || len(ruleIDs) == 0 {
+		return false
+	}
+	m.mu.RLock()
+	db := m.db
+	m.mu.RUnlock()
+	if db == nil {
+		return false
+	}
+	for _, rid := range ruleIDs {
+		var autoAct int
+		if err := db.QueryRowContext(ctx, `SELECT auto_act_enabled FROM rule_groups WHERE id = ? AND enabled = 1`, rid).Scan(&autoAct); err == nil && autoAct != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 type sqlRows interface {
@@ -230,6 +271,8 @@ func (m *Module) deleteItem(ctx context.Context, c storedCandidate) error {
 		m.mu.RUnlock()
 		_, err := tc.RemoveEpisodeFile(ctx, &tvmgmtv1.RemoveEpisodeFileRequest{EpisodeId: c.ItemID, DeleteFiles: true})
 		return err
+	case ScopeSeason:
+		return m.deleteSeason(ctx, c)
 	default:
 		return fmt.Errorf("delete not supported for scope %s", c.Scope)
 	}
@@ -308,6 +351,21 @@ func (m *Module) unmonitorItem(ctx context.Context, c storedCandidate, alsoDelet
 			_, err = tc.RemoveEpisodeFile(ctx, &tvmgmtv1.RemoveEpisodeFileRequest{EpisodeId: c.ItemID, DeleteFiles: true})
 		}
 		return err
+	case ScopeSeason:
+		if err := m.ensureTV(ctx); err != nil {
+			return err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		_, err := tc.UpdateSeasonMonitored(ctx, &tvmgmtv1.UpdateSeasonMonitoredRequest{SeasonId: c.ItemID, Monitored: false})
+		if err != nil {
+			return err
+		}
+		if alsoDelete {
+			return m.deleteSeason(ctx, c)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unmonitor not supported for scope %s", c.Scope)
 	}
@@ -402,6 +460,38 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+func (m *Module) deleteSeason(ctx context.Context, c storedCandidate) error {
+	if err := m.ensureTV(ctx); err != nil {
+		return err
+	}
+	ec := parseEvalContext(c.CriteriaJSON)
+	if ec.SeriesID == "" {
+		return fmt.Errorf("season delete requires series_id in criteria")
+	}
+	m.mu.RLock()
+	tc := m.tvClient
+	m.mu.RUnlock()
+	resp, err := tc.GetTVShow(ctx, &tvmgmtv1.GetTVShowRequest{SeriesId: ec.SeriesID})
+	if err != nil {
+		return err
+	}
+	for _, season := range resp.GetSeries().GetSeasons() {
+		if season.GetId() != c.ItemID {
+			continue
+		}
+		for _, ep := range season.GetEpisodes() {
+			if !ep.GetHasFile() {
+				continue
+			}
+			if _, err := tc.RemoveEpisodeFile(ctx, &tvmgmtv1.RemoveEpisodeFileRequest{EpisodeId: ep.GetId(), DeleteFiles: true}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("season %s not found in series %s", c.ItemID, ec.SeriesID)
 }
 
 func (m *Module) closeRequestsForItem(ctx context.Context, c storedCandidate) {

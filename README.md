@@ -50,16 +50,46 @@ grpcurl -plaintext -d '{"dryRun": true}' :9545 muxcore.library.maintainer.v1.Mai
 
 ## Configuration
 
-| Env / setting | Default | Description |
-|---------------|---------|-------------|
-| `MAINTAINER_DB_PATH` | `/var/lib/media-library-maintainer/maintainer.db` | SQLite state |
+### Module env
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAINTAINER_DB_PATH` | `/var/lib/media-library-maintainer/maintainer.db` | SQLite state (rules, candidates, settings) |
 | `MAINTAINER_GRPC_ADDR` | `:9545` | gRPC listen address |
-| `MAINTAINER_USERDATA_DIR` | `/var/lib/muxcore-userdata` | Watch progress store |
+| `MAINTAINER_USERDATA_DIR` | `/var/lib/muxcore-userdata` | Watch progress store for playback rules |
+| `MAINTAINER_MOVE_PATH` | — | Archive destination for move actions |
+| `MAINTAINER_FREE_UP_ROOT` | `/data` | Root path monitored for emergency free-up |
+| `MAINTAINER_ADD_LIST_EXCLUSION` | `false` | Add Radarr TMDB exclusions on movie delete |
+
+### Mesh settings (persisted to SQLite)
+
+| Key | Default | Description |
+|-----|---------|-------------|
 | `scan_interval_minutes` | `1440` | Rule evaluation interval |
 | `act_interval_minutes` | `360` | Action executor interval |
-| `auto_act_enabled` | `false` | Auto-delete pending candidates after delay |
-| `dry_run` | `false` | Log-only mode |
-| `max_actions_per_run` | `50` | Batch delete limit |
+| `auto_act_enabled` | `false` | Auto-act pending candidates after `act_after` |
+| `dry_run` | `false` | Log-only scan/act (no persist or deletes) |
+| `max_actions_per_run` | `50` | Batch delete limit per act cycle |
+| `overlay_enabled` / `overlay_*` | — | Leaving-soon poster overlays via MediaAdmin |
+| `download_client_*` | — | qBittorrent cleanup after delete |
+
+See `.env.example` for Jellyfin, Plex, Radarr, Sonarr, qBittorrent, Transmission, Deluge, OMDB, Trakt, MDBList, and overlay env vars.
+
+### Integration env (optional)
+
+| Variable | Purpose |
+|----------|---------|
+| `JELLYFIN_BASE_URL` / `MAINTAINER_JELLYFIN_*` | Leaving-soon Jellyfin collections |
+| `PLEX_URL` / `PLEX_TOKEN` / `MAINTAINER_PLEX_*` | Leaving-soon Plex collections |
+| `RADARR_URL` / `RADARR_API_KEY` | Movie history, import exclusions |
+| `SONARR_URL` / `SONARR_API_KEY` | TV file paths, episode metadata |
+| `QBITTORRENT_*` / `MAINTAINER_QBITTORRENT_*` | Torrent cleanup after delete |
+| `TRANSMISSION_*` / `MAINTAINER_TRANSMISSION_*` | Alternative download client |
+| `DELUGE_*` / `MAINTAINER_DELUGE_*` | Alternative download client |
+| `OMDB_API_KEY` / `MAINTAINER_OMDB_API_KEY` | OMDB ratings for rules |
+| `TRAKT_CLIENT_ID` / `MAINTAINER_TRAKT_*` | Trakt exclusion lists |
+| `MDBLIST_API_KEY` / `MAINTAINER_MDBLIST_*` | MDBList ratings and lists |
+| `JUSTWATCH_API_URL` | JustWatch exclusion policies |
 
 ## gRPC API
 

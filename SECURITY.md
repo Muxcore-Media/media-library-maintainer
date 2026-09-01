@@ -2,32 +2,25 @@
 
 ## Status
 
-Pre-1.0 beta software. APIs and interfaces are not yet stable.
+Pre-1.0 software. Destructive actions (delete, unmonitor, move) require explicit approval or auto-act configuration.
 
 ## Supported Versions
 
 | Version | Supported          |
 | ------- | ------------------ |
-| main    | :white_check_mark: |
+| 0.1.x   | :white_check_mark: |
 | < 0.1   | :x:                |
 
 ## Reporting a Vulnerability
 
-**Do not open a public issue.** Report via GitHub Security Advisories:
-https://github.com/yourorg/your-module/security/advisories
+**Do not open a public issue.** Report via Forgejo security advisories on `muxcore/media-library-maintainer`, or contact the MuxCore maintainers privately.
 
 Acknowledgment within **72 hours**. Target patch: **7 days** critical, **30 days** moderate.
-
-## Disclosure Policy
-
-1. Reporter submits private report
-2. Maintainers triage within 72 hours, assign severity
-3. Fix developed in private fork; reporter credited (with permission)
-4. GitHub Security Advisory published with fix release
 
 ## Safe Harbor
 
 We will not pursue legal action against researchers who:
+
 - Test against their own MuxCore instance
 - Avoid accessing or modifying data that does not belong to them
 - Make a good-faith effort to avoid degradation of service

@@ -77,7 +77,60 @@ func (m *Module) itemFilePaths(ctx context.Context, c storedCandidate) ([]string
 		}
 		return paths, nil
 	case ScopeEpisode:
-		return nil, fmt.Errorf("episode move requires file path in criteria")
+		ec := parseEvalContext(c.CriteriaJSON)
+		if ec.FilePath != "" {
+			return []string{ec.FilePath}, nil
+		}
+		if f := m.episodeFileDetails(ctx, ec.TmdbID, ec.SeasonNumber, ec.EpisodeNumber, c.ItemID); f.Path != "" {
+			return []string{f.Path}, nil
+		}
+		return nil, fmt.Errorf("episode move requires file path")
+	case ScopeSeason:
+		files, err := m.seasonEpisodeFiles(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		var paths []string
+		for _, f := range files {
+			if f.Path != "" {
+				paths = append(paths, f.Path)
+			}
+		}
+		if len(paths) == 0 {
+			return nil, fmt.Errorf("season move requires episode files")
+		}
+		return paths, nil
+	case ScopeSeries:
+		ec := parseEvalContext(c.CriteriaJSON)
+		if ec.SeriesID == "" {
+			return nil, fmt.Errorf("series move requires series_id in criteria")
+		}
+		if err := m.ensureTV(ctx); err != nil {
+			return nil, err
+		}
+		m.mu.RLock()
+		tc := m.tvClient
+		m.mu.RUnlock()
+		resp, err := tc.GetTVShow(ctx, &tvmgmtv1.GetTVShowRequest{SeriesId: ec.SeriesID})
+		if err != nil {
+			return nil, err
+		}
+		var paths []string
+		for _, season := range resp.GetSeries().GetSeasons() {
+			for _, ep := range season.GetEpisodes() {
+				if !ep.GetHasFile() {
+					continue
+				}
+				f := m.episodeFileDetails(ctx, ec.TmdbID, int(ep.GetSeasonNumber()), int(ep.GetEpisodeNumber()), ep.GetId())
+				if f.Path != "" {
+					paths = append(paths, f.Path)
+				}
+			}
+		}
+		if len(paths) == 0 {
+			return nil, fmt.Errorf("series move requires episode files")
+		}
+		return paths, nil
 	default:
 		return nil, fmt.Errorf("move not supported for scope %s", c.Scope)
 	}

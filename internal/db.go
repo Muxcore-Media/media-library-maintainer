@@ -128,6 +128,10 @@ func (m *Module) initDB(ctx context.Context) error {
 			started_at TEXT NOT NULL,
 			completed_at TEXT DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings_kv (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
@@ -143,6 +147,7 @@ func (m *Module) initDB(ctx context.Context) error {
 	m.mu.Lock()
 	m.db = db
 	m.mu.Unlock()
+	m.loadPersistedSettings(ctx)
 	return nil
 }
 

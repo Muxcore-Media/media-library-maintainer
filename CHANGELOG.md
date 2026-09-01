@@ -1,7 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.12] — 2026-08-31
+
+### Fixed
+
+- Preserve `act_after` on rescan; apply collection `grace_days` when a rule assigns a collection.
+- Resume postponed candidates after `postponed_until` expires.
+- Season delete/unmonitor and TV series/episode/season move actions.
+- Honor per-rule and global `auto_act_enabled`; free-up respects the pending gate.
+- Persist mesh settings to SQLite (`settings_kv`) and reload on startup.
+- Cancel scheduler on module stop; close ffprobe mesh connection.
+- TV episode/season file size and ffprobe enrichment during scan.
 
 ### Added
 
-- Initial scaffold from muxcore-module-starter cookiecutter
+- `internal/act_test.go` covering pending gate, dry-run, disk gate, free-up ordering, and delete RPCs.
+- Admin UI collections CRUD, protections CRUD, and candidate postpone on `/maintainer`.
+- Full env documentation in README and `.env.example`.
+
+## [0.1.0] — 2026-08
+
+- Initial MuxCore library maintainer with rules, candidates, collections, and act pipeline.

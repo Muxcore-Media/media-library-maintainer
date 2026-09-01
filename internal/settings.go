@@ -259,6 +259,7 @@ func (m *Module) updateSetting(key, value string) error { //nolint:gocyclo // se
 	value = strings.TrimSpace(value)
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()
+	persist := true
 	switch key {
 	case "scan_interval_minutes":
 		n, err := strconv.Atoi(value)
@@ -266,121 +267,102 @@ func (m *Module) updateSetting(key, value string) error { //nolint:gocyclo // se
 			return fmt.Errorf("invalid scan_interval_minutes %q", value)
 		}
 		m.scanInterval = time.Duration(n) * time.Minute
-		return nil
 	case "act_interval_minutes":
 		n, err := strconv.Atoi(value)
 		if err != nil || n <= 0 {
 			return fmt.Errorf("invalid act_interval_minutes %q", value)
 		}
 		m.actInterval = time.Duration(n) * time.Minute
-		return nil
 	case "auto_act_enabled":
 		m.autoActEnabled = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "dry_run":
 		m.dryRun = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "max_actions_per_run":
 		n, err := strconv.Atoi(value)
 		if err != nil || n <= 0 {
 			return fmt.Errorf("invalid max_actions_per_run %q", value)
 		}
 		m.maxActionsPerRun = n
-		return nil
 	case "notify_enabled":
 		m.notifyEnabled = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "leaving_soon_notify_enabled":
 		m.leavingSoonNotifyEnabled = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "overlay_enabled":
 		m.overlayEnabled = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "overlay_show_date":
 		m.overlayShowDate = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "overlay_date_format":
 		m.overlayDateFormat = value
-		return nil
 	case "overlay_bar_color":
 		m.overlayBarColor = value
-		return nil
 	case "overlay_pill_color":
 		m.overlayPillColor = value
-		return nil
 	case "overlay_pill_text_color":
 		m.overlayPillTextColor = value
-		return nil
 	case "overlay_title_card_enabled":
 		m.overlayTitleCardEnabled = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "overlay_template_json":
 		m.overlayTemplateJSON = value
-		return nil
 	case "overlay_titlecard_template_json":
 		m.overlayTitleCardTemplateJSON = value
-		return nil
 	case "protect_unwatched_requesters":
 		m.protectUnwatchedRequesters = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "protect_request_min_age_days":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("invalid protect_request_min_age_days %q", value)
 		}
 		m.protectRequestMinAgeDays = n
-		return nil
 	case "protect_request_max_days":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("invalid protect_request_max_days %q", value)
 		}
 		m.protectRequestMaxDays = n
-		return nil
 	case "move_path":
 		m.movePath = value
-		return nil
 	case "disk_act_max_free_percent":
 		f, err := strconv.ParseFloat(value, 64)
 		if err != nil || f < 0 {
 			return fmt.Errorf("invalid disk_act_max_free_percent %q", value)
 		}
 		m.diskActMaxFreePercent = f
-		return nil
 	case "free_up_root_path":
 		m.freeUpRootPath = value
-		return nil
 	case "add_list_exclusion_on_delete":
 		m.addListExclusionOnDelete = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "userdata_dir":
 		m.userdataDataDir = value
-		return nil
 	case "download_client_url":
 		m.downloadClientURL = value
-		return nil
 	case "download_client_username":
 		m.downloadClientUser = value
-		return nil
 	case "download_client_password":
 		if value != "" && value != "********" {
 			m.downloadClientPass = value
+		} else {
+			persist = false
+		}
+		if persist {
+			m.persistSetting(key, value)
 		}
 		return nil
 	case "download_client_delete_data":
 		m.downloadClientDeleteDataSet = true
 		m.downloadClientDeleteData = strings.EqualFold(value, "true") || value == "1"
-		return nil
 	case "download_client_fallback_ratio":
 		f, err := strconv.ParseFloat(value, 64)
 		if err != nil || f < 0.5 {
 			return fmt.Errorf("invalid download_client_fallback_ratio %q", value)
 		}
 		m.downloadClientFallbackRatio = f
-		return nil
 	default:
 		return fmt.Errorf("unknown setting %q", key)
 	}
+	if persist {
+		m.persistSetting(key, value)
+	}
+	return nil
 }
 
 func (m *Module) getScanInterval() time.Duration {

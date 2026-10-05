@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/Muxcore-Media/core/sdk/go/module/pathguard"
 	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
 	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
 )
@@ -24,7 +26,10 @@ func (m *Module) moveItem(ctx context.Context, c storedCandidate) error {
 		if src == "" {
 			continue
 		}
-		dst := filepath.Join(destRoot, filepath.Base(src))
+		dst, err := moveDest(destRoot, src)
+		if err != nil {
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			return err
 		}
@@ -33,6 +38,14 @@ func (m *Module) moveItem(ctx context.Context, c storedCandidate) error {
 		}
 	}
 	return m.removeFromLibrary(ctx, c)
+}
+
+func moveDest(destRoot, src string) (string, error) {
+	root, err := filepath.Abs(strings.TrimSpace(destRoot))
+	if err != nil {
+		return "", err
+	}
+	return pathguard.Join(root, filepath.Base(src))
 }
 
 func moveFile(src, dst string) error {

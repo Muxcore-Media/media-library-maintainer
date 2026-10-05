@@ -4,6 +4,7 @@
 
 ### Security
 - Shared outbound HTTP (Arr, Plex, Jellyfin, download clients, and metadata APIs) uses netguard Integration (private LAN and loopback allowed; link-local, cloud metadata, and non-HTTP schemes refused) (NFR-SEC-009).
+- The library move destination is confined with pathguard to `MAINTAINER_MOVE_PATH` (NFR-SEC-008).
 
 ## [0.1.15] - 2026-10-05
 

@@ -109,7 +109,7 @@ func NewModule(cfg Config) *Module {
 		id:             cfg.ID,
 		dbPath:         cfg.DBPath,
 		grpcAddr:       cfg.GRPCAddr,
-		httpCli:        &http.Client{Timeout: 30 * time.Second},
+		httpCli:        newGuardedClient(30 * time.Second),
 		requestUserMap: make(map[string]string),
 	}
 }

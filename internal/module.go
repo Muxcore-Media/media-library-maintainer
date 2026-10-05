@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	ffprobev1 "github.com/Muxcore-Media/media-ffprobe/proto/ffprobev1"
+	manifest "github.com/Muxcore-Media/media-library-maintainer"
 	maintainv1 "github.com/Muxcore-Media/media-library-maintainer/proto/maintainv1"
 	mgmntv1 "github.com/Muxcore-Media/media-movies/proto/mgmntv1"
 	tvmgmtv1 "github.com/Muxcore-Media/media-tvshows/proto/tvmgmtv1"
@@ -117,7 +118,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:          m.id,
 		Name:        "Media Library Maintainer",
-		Version:     "0.1.12",
+		Version:     modulesdk.ManifestVersion(manifest.ManifestJSON),
 		Roles:       []string{"library-maintainer", "cleanup"},
 		Description: "Automated library maintenance with rules, grace periods, and cleanup actions",
 		Author:      "MuxCore",

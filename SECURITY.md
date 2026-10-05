@@ -13,7 +13,7 @@ Pre-1.0 software. Destructive actions (delete, unmonitor, move) require explicit
 
 ## Reporting a Vulnerability
 
-**Do not open a public issue.** Report via Forgejo security advisories on `muxcore/media-library-maintainer`, or contact the MuxCore maintainers privately.
+**Do not open a public issue.** Report via GitHub Security Advisories on `Muxcore-Media/media-library-maintainer`, or contact the MuxCore maintainers privately.
 
 Acknowledgment within **72 hours**. Target patch: **7 days** critical, **30 days** moderate.
 

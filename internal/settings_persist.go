@@ -16,7 +16,7 @@ func (m *Module) persistSetting(key, value string) {
 	_, _ = m.db.ExecContext(context.Background(), `INSERT INTO settings_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 }
 
-func (m *Module) loadPersistedSettings(ctx context.Context) { //nolint:gocyclo // restores all mesh settings at startup
+func (m *Module) loadPersistedSettings(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.db == nil {

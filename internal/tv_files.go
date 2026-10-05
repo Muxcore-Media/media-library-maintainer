@@ -46,13 +46,13 @@ func (m *Module) sonarrEpisodeFile(ctx context.Context, tmdbSeriesID, seasonNum,
 		return tvFileDetails{}, false
 	}
 	var files []struct {
-		Path      string `json:"path"`
-		Size      int64  `json:"size"`
-		Quality   struct {
+		Path    string `json:"path"`
+		Quality struct {
 			Quality struct {
 				Name string `json:"name"`
 			} `json:"quality"`
 		} `json:"quality"`
+		Size int64 `json:"size"`
 	}
 	if json.Unmarshal(raw, &files) != nil || len(files) == 0 {
 		return tvFileDetails{}, false
@@ -137,8 +137,8 @@ func (m *Module) seasonFilesFromSonarr(ctx context.Context, tmdbSeriesID, season
 		return nil, fmt.Errorf("sonarr episode list status %d", code)
 	}
 	var episodes []struct {
-		SeasonNumber  int `json:"seasonNumber"`
-		EpisodeNumber int `json:"episodeNumber"`
+		SeasonNumber  int  `json:"seasonNumber"`
+		EpisodeNumber int  `json:"episodeNumber"`
 		HasFile       bool `json:"hasFile"`
 	}
 	if json.Unmarshal(raw, &episodes) != nil {

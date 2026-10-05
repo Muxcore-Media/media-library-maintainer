@@ -514,7 +514,7 @@ func (m *Module) closeRequestsForItem(ctx context.Context, c storedCandidate) {
 		}
 		_, _ = rc.DenyRequest(ctx, &requestmedia.DenyRequestRequest{
 			RequestId: r.GetRequestId(),
-			DeniedBy:  m.id,
+			Reason:    "denied by " + m.id,
 		})
 	}
 }

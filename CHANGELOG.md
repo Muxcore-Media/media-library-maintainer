@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.12] - 2026-10-05
+
+### Fixed
+- Deny actions send a valid `DenyRequestRequest` (the denier is recorded in the reason).
+
+### Changed
+- Dependencies resolve from published GitHub tags (core v0.6.2, request-media v0.3.2); CI on GitHub-hosted runners from the umbrella template.
+
 ## [0.1.12] — 2026-08-31
 
 ### Fixed

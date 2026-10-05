@@ -44,6 +44,7 @@ type Module struct {
 	playbackConn                 *grpc.ClientConn
 	moviesConn                   *grpc.ClientConn
 	httpCli                      *http.Client
+	schedulerCancel              context.CancelFunc
 	overlayTemplateJSON          string
 	userdataDataDir              string
 	overlayTitleCardTemplateJSON string
@@ -79,7 +80,6 @@ type Module struct {
 	downloadClientDeleteDataSet  bool
 	downloadClientDeleteData     bool
 	leavingSoonNotifyEnabled     bool
-	schedulerCancel              context.CancelFunc
 }
 
 type Config struct {
@@ -154,10 +154,10 @@ func (m *Module) Start(ctx context.Context) error {
 			slog.Error("media-library-maintainer gRPC error", "error", err)
 		}
 	}()
-	schedCtx, cancel := context.WithCancel(context.Background())
+	schedCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	m.schedulerCancel = cancel
 	go m.schedulerLoop(schedCtx)
-	go m.dialCore(context.Background()) //nolint:gosec // background mesh dial for module lifetime
+	go m.dialCore(context.WithoutCancel(ctx)) //nolint:gosec // background mesh dial for module lifetime
 	return nil
 }
 

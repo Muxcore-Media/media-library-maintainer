@@ -7,7 +7,7 @@ require (
 	github.com/Muxcore-Media/contracts-notification v0.1.2
 	github.com/Muxcore-Media/core/pkg/contracts v0.6.0
 	github.com/Muxcore-Media/core/sdk/go/client v0.6.1
-	github.com/Muxcore-Media/core/sdk/go/module v0.6.3
+	github.com/Muxcore-Media/core/sdk/go/module v0.6.4
 	github.com/Muxcore-Media/media-ffprobe v0.1.10
 	github.com/Muxcore-Media/media-movies v0.1.12
 	github.com/Muxcore-Media/media-tvshows v0.1.13
@@ -23,7 +23,7 @@ require (
 )
 
 require (
-	github.com/Muxcore-Media/core v0.6.12 // indirect
+	github.com/Muxcore-Media/core v0.6.14 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

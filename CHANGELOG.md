@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.13] - 2026-10-05
+
+
+### Fixed
+- Exclusion-list sync no longer deadlocks on the single-connection SQLite pool: the list cursor is drained and closed before the per-list `UPDATE` writes.
+
 ## [0.1.12] - 2026-10-05
 
 ### Fixed

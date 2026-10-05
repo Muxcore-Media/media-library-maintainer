@@ -1,7 +1,7 @@
 {
   "name": "Media Library Maintainer",
   "description": "Automated library maintenance with rules, grace periods, and cleanup actions (Maintainerr/Reclaimerr/Deleterr parity)",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "author": "MuxCore",
   "roles": [
     "library-maintainer",

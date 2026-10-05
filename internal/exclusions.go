@@ -57,12 +57,26 @@ func (m *Module) syncExclusionLists(ctx context.Context) (listsSynced, idsLoaded
 	if err != nil {
 		return 0, 0, err
 	}
-	defer func() { _ = rows.Close() }()
+	// Drain the cursor before any write: the pool is limited to one connection,
+	// so holding rows open while executing UPDATE would deadlock.
+	type listRow struct{ id, name, typ, url, key string }
+	var lists []listRow
 	for rows.Next() {
-		var id, name, typ, url, key string
-		if err := rows.Scan(&id, &name, &typ, &url, &key); err != nil {
+		var r listRow
+		if err := rows.Scan(&r.id, &r.name, &r.typ, &r.url, &r.key); err != nil {
 			continue
 		}
+		lists = append(lists, r)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+	for _, l := range lists {
+		id, typ, url, key := l.id, l.typ, l.url, l.key
 		ids, syncErr := m.fetchListTMDBIDs(ctx, typ, url, key)
 		if syncErr != nil {
 			continue

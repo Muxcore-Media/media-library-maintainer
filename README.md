@@ -60,6 +60,7 @@ grpcurl -plaintext -d '{"dryRun": true}' :9545 muxcore.library.maintainer.v1.Mai
 | `MAINTAINER_MOVE_PATH` | — | Archive destination for move actions |
 | `MAINTAINER_FREE_UP_ROOT` | `/data` | Root path monitored for emergency free-up |
 | `MAINTAINER_ADD_LIST_EXCLUSION` | `false` | Add Radarr TMDB exclusions on movie delete |
+| `ERASURE_SWEEP_INTERVAL` | `5m` | How often the user-erasure reconciler reads the identity ledger (Go duration) |
 
 ### Mesh settings (persisted to SQLite)
 
@@ -90,6 +91,30 @@ See `.env.example` for Jellyfin, Plex, Radarr, Sonarr, qBittorrent, Transmission
 | `TRAKT_CLIENT_ID` / `MAINTAINER_TRAKT_*` | Trakt exclusion lists |
 | `MDBLIST_API_KEY` / `MAINTAINER_MDBLIST_*` | MDBList ratings and lists |
 | `JUSTWATCH_API_URL` | JustWatch exclusion policies |
+
+## User erasure (ADR-0035)
+
+When an admin deletes a user, the identity provider records a tombstone in its
+erasure ledger. This module runs a reconciler (startup, then every
+`ERASURE_SWEEP_INTERVAL`) that reads the ledger **only** from the verified
+provider of the exclusive `identity` capability, found through core.
+
+For each tombstone it has not applied, it deletes every candidate whose stored
+`criteria_json` names the erased user **id** as `RequestedBy` or as a key of a
+per-user watch map (`UserWatchedPercent`, `UserWatchedDurationMinutes`). The
+delete and the `erasure_applied` record are one SQLite transaction; re-applying
+a tombstone is a no-op. Matching is exact on the id, never a username or a
+prefix. Candidates are regenerated on the next scan from current data, and a
+scan never persists an id that has an `erasure_applied` record.
+
+- `household`/`staging` profiles refuse to start without `MUXCORE_GRPC_ADDR`
+  (a core connection); `dev` logs a warning and disables the reconciler.
+- Candidates carry no tenant, so the tombstone's tenant is recorded but not
+  compared; user ids are globally unique.
+- Not covered by this disposition: the poster overlay and notification state
+  for a deleted candidate (`overlay_state`, `leaving_soon_notified`; they hold
+  item ids, not user ids) and the userdata reads in `requester_protect.go`
+  (roadmap C-39).
 
 ## gRPC API
 

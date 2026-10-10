@@ -132,6 +132,15 @@ func (m *Module) initDB(ctx context.Context) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		)`,
+		// ADR-0035: one row per user erasure applied from the identity ledger.
+		`CREATE TABLE IF NOT EXISTS erasure_applied (
+			erasure_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			tenant_id TEXT NOT NULL,
+			applied_at TEXT NOT NULL,
+			counts_json TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS erasure_applied_user_id ON erasure_applied (user_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {

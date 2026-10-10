@@ -410,12 +410,26 @@ func (m *Module) persistCandidates(ctx context.Context, matches map[string]candi
 	if m.db == nil {
 		return 0
 	}
+	// ADR-0035: never re-persist a user id the identity ledger has erased.
+	// Upstream owners may still carry it until they apply the same tombstone;
+	// the candidate is regenerated once they have. Read under m.mu, which
+	// eraseUser also holds, so an erasure cannot land between this read and
+	// the inserts below.
+	erased, erasedErr := erasedUserIDs(ctx, m.db)
+	if erasedErr != nil {
+		slog.Warn("persist candidates skipped: cannot read erasure records", "error", erasedErr)
+		return 0
+	}
 	for _, match := range matches {
 		if match.Ctx.Protected {
 			continue
 		}
 		ruleIDs, _ := json.Marshal(match.RuleIDs)
 		criteria, _ := json.Marshal(match.Ctx)
+		if criteriaNameErasedUser(string(criteria), erased) {
+			slog.Debug("candidate not persisted: names an erased user", "item", match.Ctx.ItemID)
+			continue
+		}
 		now := nowRFC()
 		actAfter := now
 		status := StatusPending

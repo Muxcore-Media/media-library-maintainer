@@ -24,11 +24,18 @@ import (
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	"github.com/Muxcore-Media/core/sdk/go/client"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	"github.com/Muxcore-Media/core/sdk/go/module/erasure"
 	_ "modernc.org/sqlite"
 )
 
 type Module struct {
 	maintainv1.UnimplementedMaintainerServiceServer
+	erasureDialer                *erasure.ProviderDialer
+	erasureTune                  func(*erasure.Config)
+	reconciler                   *erasure.Reconciler
+	erasureConn                  *grpc.ClientConn
+	erasureCancel                context.CancelFunc
+	erasureDone                  chan struct{}
 	moviesClient                 mgmntv1.MovieManagementServiceClient
 	ffprobeClient                ffprobev1.AnalysisServiceClient
 	grpcLis                      net.Listener
@@ -64,6 +71,7 @@ type Module struct {
 	diskActMaxFreePercent        float64
 	maxActionsPerRun             int
 	scanInterval                 time.Duration
+	erasureInterval              time.Duration
 	downloadClientFallbackRatio  float64
 	actInterval                  time.Duration
 	protectRequestMinAgeDays     int
@@ -84,9 +92,15 @@ type Module struct {
 }
 
 type Config struct {
-	ID       string
-	DBPath   string
-	GRPCAddr string
+	// ErasureDialer overrides discovery of the identity provider through the
+	// core connection (tests). ErasureInterval overrides
+	// ERASURE_SWEEP_INTERVAL; ErasureTune adjusts the reconciler config.
+	ErasureDialer   *erasure.ProviderDialer
+	ErasureTune     func(*erasure.Config)
+	ID              string
+	DBPath          string
+	GRPCAddr        string
+	ErasureInterval time.Duration
 }
 
 func NewModule(cfg Config) *Module {
@@ -111,6 +125,10 @@ func NewModule(cfg Config) *Module {
 		grpcAddr:       cfg.GRPCAddr,
 		httpCli:        &http.Client{Timeout: 30 * time.Second},
 		requestUserMap: make(map[string]string),
+
+		erasureDialer:   cfg.ErasureDialer,
+		erasureInterval: cfg.ErasureInterval,
+		erasureTune:     cfg.ErasureTune,
 	}
 }
 
@@ -136,8 +154,14 @@ func (m *Module) Init(ctx context.Context) error {
 	if err := m.initDB(ctx); err != nil {
 		return err
 	}
+	if err := m.setupErasure(); err != nil {
+		m.closeDB()
+		return err
+	}
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", m.grpcAddr)
 	if err != nil {
+		m.closeErasureConn()
+		m.closeDB()
 		return fmt.Errorf("listen gRPC: %w", err)
 	}
 	m.grpcLis = lis
@@ -159,10 +183,13 @@ func (m *Module) Start(ctx context.Context) error {
 	m.schedulerCancel = cancel
 	go m.schedulerLoop(schedCtx)
 	go m.dialCore(context.WithoutCancel(ctx)) //nolint:gosec // background mesh dial for module lifetime
+	m.startErasure(ctx)
 	return nil
 }
 
 func (m *Module) Stop(ctx context.Context) error {
+	// The reconciler writes to the database: stop and wait for it first.
+	m.stopErasure(ctx)
 	if m.schedulerCancel != nil {
 		m.schedulerCancel()
 	}
@@ -187,14 +214,18 @@ func (m *Module) Stop(ctx context.Context) error {
 	if m.mc != nil {
 		_ = m.mc.Close()
 	}
+	m.closeDB()
+	slog.Info("media-library-maintainer stopped")
+	return nil
+}
+
+func (m *Module) closeDB() {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.db != nil {
 		_ = m.db.Close()
 		m.db = nil
 	}
-	m.mu.Unlock()
-	slog.Info("media-library-maintainer stopped")
-	return nil
 }
 
 func (m *Module) Health(ctx context.Context) error {

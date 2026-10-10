@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- User erasure (ADR-0035, T-M4-07 E10): the shared `erasure.Reconciler` applies the identity provider's erasure ledger. A tombstone deletes the candidates whose `criteria_json` names the erased user id (`RequestedBy` or a per-user watch map key) and records the erasure in the new `erasure_applied` table in one transaction; candidates regenerate on the next scan. Scans no longer persist an erased user id. `ERASURE_SWEEP_INTERVAL` sets the sweep period; household/staging require `MUXCORE_GRPC_ADDR`.
+
+### Changed
+- Built on core v0.6.17 / sdk/go/module v0.6.7.
+
 ## [0.1.15] - 2026-10-05
 
 ### Changed
